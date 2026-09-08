@@ -17,8 +17,9 @@ When a user clones this repo and starts Claude Code, help them:
 2. Install Claude Code (`npm install -g @anthropic-ai/claude-code`, 2.1.224 or
    newer) and log in with `claude` — JARVIS's brain runs on your Claude
    subscription, not on an API key
-3. Get a Fish Audio API key from fish.audio (required — there is no fallback
-   voice)
+3. Nothing to sign up for: the voice is macOS's own `say`, offline and
+   keyless. A Fish Audio key is optional and read only with
+   `JARVIS_TTS_BACKEND=fish`
 4. Install Python dependencies: pip install -r requirements.txt
 5. Install the Playwright browser: python -m playwright install chromium
    (`read_page` / `look_at_page` need it)
@@ -45,7 +46,8 @@ this presents as "the UI is up but nothing works" rather than as an error.
 - **Communication**: WebSocket (JSON messages + binary audio)
 - **AI**: a long-lived Claude Code process (`brain.py`, Sonnet by default) on
   the user's subscription; no Anthropic API calls on the voice path
-- **TTS**: Fish Audio with JARVIS voice model
+- **TTS**: `tts.py` — macOS `say` (WAV, offline, default) or Fish Audio
+  (MP3, hosted, `JARVIS_TTS_BACKEND=fish`), one call per sentence chunk
 - **System**: AppleScript for Terminal and Chrome integration
 - **Runs**: every Claude Code execution goes through one recorded pipeline —
   `run_store.py` (SQLite) + `run_executor.py`, surfaced at `/api/runs`,
@@ -91,7 +93,10 @@ arbitrary LLM and file content, so everything goes through
   forwards `tools/call` to `POST /internal/tool`
 - `speech.py` — Sentence splitting and the scheduler that owns every
   utterance JARVIS speaks
-- `tts.py` — Fish Audio synthesis, one request per sentence chunk
+- `tts.py` — Synthesis, one call per sentence chunk, two backends behind one
+  function. `say` writes WAV to a temp file (it cannot stream — `-o -` yields
+  nothing) with the text on STDIN, never argv; Fish streams MP3. A chunk that
+  cannot be synthesised is `None`, never an exception — the mouth survives it
 - `frontend/src/orb.ts` — Three.js particle orb visualization
 - `frontend/src/voice.ts` — Web Speech API + audio playback
 - `frontend/src/main.ts` — Frontend state machine
@@ -118,7 +123,9 @@ arbitrary LLM and file content, so everything goes through
 - `usage_store.py` — Tracks the subscription's five-hour / seven-day
   rate-limit usage (there is no spend to report — see brain.py)
 - `preflight.py` — First-run environment checks: `claude` CLI/login,
-  Accessibility, Fish key, cross-session steering
+  Accessibility, the voice (backend-aware: the `say` binary and whether the
+  configured voice is actually installed, or the Fish key), cross-session
+  steering
 - `claude_env.py` — The environment every spawned Claude Code child gets,
   including the `ANTHROPIC_*` scrub
 - `actions.py` — System actions (Terminal, Chrome) via AppleScript
@@ -189,8 +196,16 @@ JARVIS builds**. It is only this repository's own copies that are gone.
   never spawns it (every test sets this)
 - `JARVIS_MUTE_MIC_DURING_SPEECH` (optional, default false) — fallback if echo
   rejection is not enough with a given microphone
-- `FISH_API_KEY` (required) — Fish Audio TTS
-- `FISH_VOICE_ID` (optional) — Voice model ID
+- `JARVIS_TTS_BACKEND` (optional, default `say`) — `say` for the local macOS
+  voice, `fish` for Fish Audio. An unknown value falls back to `say` with a
+  warning: a typo in `.env` must not cost the user his voice
+- `JARVIS_TTS_VOICE` (optional, default `Daniel`) — any voice `say -v '?'`
+  lists. `say -v Bogus` exits 0 and quietly uses the system default, so
+  preflight checks the name against that listing and warns
+- `JARVIS_TTS_RATE` (optional) — words per minute; unset is the voice's own
+- `FISH_API_KEY` (optional) — Fish Audio TTS, read only when the backend is
+  `fish`. JARVIS speaks without it
+- `FISH_VOICE_ID` (optional) — Voice model ID, with the fish backend
 - `USER_NAME` (optional) — Your name for JARVIS to use
 - `JARVIS_DATA_DIR` (optional) — Where JARVIS writes everything: the SQLite
   database, memory Markdown, usage.json, the tool token. Defaults to `data/`

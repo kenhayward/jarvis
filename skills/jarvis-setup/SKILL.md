@@ -92,14 +92,29 @@ does not follow the app there. Move it to `/Applications` and relaunch.
 error `-1728` / "not allowed assistive access") without ever triggering the
 permission prompt itself, and its remedy text carries this same guidance.
 
-## `FISH_API_KEY` is genuinely required — there is no fallback voice
+## The voice is local now, and no key is required
 
-`tts.py` calls the Fish Audio API directly; if the key is missing or empty,
-`synthesize_chunk` simply returns `None` — no error, no local TTS, no
-built-in voice of any kind. Without a real key from
-[fish.audio](https://fish.audio/), JARVIS has no voice at all, which reads
-to a new user as "it's just broken." This is the one piece of setup that
-cannot be skipped or worked around.
+This used to be the one piece of setup that could not be skipped. It is not
+any more: `tts.py` speaks through macOS's own `say` by default — offline, no
+key, no account. A user with an empty `.env` still has a voice.
+
+What can still go wrong, in order of how often:
+
+- **A voice name that is not installed.** `say -v Bogus` exits 0 and quietly
+  synthesises with the *system default* (measured), so a typo in
+  `JARVIS_TTS_VOICE` does not fail — it just stops sounding British.
+  `preflight.py`'s `voice` check compares the name against `say -v '?'` and
+  warns. `say -v '?'` lists what is installed; System Settings ->
+  Accessibility -> Spoken Content -> System Voice -> Manage Voices adds more,
+  including a free "Daniel (Premium)" that the same name then resolves to.
+- **`JARVIS_TTS_BACKEND=fish` with no `FISH_API_KEY`.** That is the one
+  configuration where a missing key means silence, and preflight fails on it.
+  A key with the default backend is simply never read — nothing is sent to
+  fish.audio unless the backend asks for it.
+- **Silence with everything configured.** `synthesize_chunk` returns `None`
+  for a chunk it cannot speak rather than raising, so a broken voice looks
+  like text-only replies in the browser, never a crash. The reason is in the
+  server log, prefixed `TTS`.
 
 ## Connecting a service: one file, and it is not the one you'd guess
 

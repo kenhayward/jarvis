@@ -381,19 +381,73 @@ def test_the_startup_check_never_takes_a_picture(monkeypatch):
     assert preflight._check_screen_recording_sync().status == STATUS_OK
 
 
-# --- FISH_API_KEY -------------------------------------------------------------
+# --- the voice ----------------------------------------------------------------
+#
+# "No FISH_API_KEY" stopped meaning "no voice" when `say` became the default
+# backend, and a preflight that fails over a key the machine does not need is
+# a preflight people learn to ignore.
 
-def test_fish_api_key_present(monkeypatch):
+_VOICES = ("Daniel              en_GB    # Hello! My name is Daniel.\n"
+           "Reed (English (UK)) en_GB    # Hello! My name is Reed.\n"
+           "Majed               ar_001   # a numeric region subtag\n")
+
+
+def _say_listing(monkeypatch, listing=_VOICES, rc=0):
+    async def fake(*args, timeout=0.0, env=None):
+        assert args[0] == "say", "the voice list comes from `say`, not another binary"
+        return rc, listing, ""
+    monkeypatch.setattr(preflight, "_run_subprocess", fake)
+
+
+@pytest.mark.asyncio
+async def test_voice_ok_when_the_local_voice_is_installed(monkeypatch):
+    monkeypatch.delenv("JARVIS_TTS_BACKEND", raising=False)
+    monkeypatch.setenv("JARVIS_TTS_VOICE", "Reed (English (UK))")
+    monkeypatch.setattr(preflight.shutil, "which", lambda name: "/usr/bin/say")
+    _say_listing(monkeypatch)
+    check = await preflight._check_voice(timeout=1.0)
+    assert check.status == STATUS_OK and check.remedy is None
+
+
+@pytest.mark.asyncio
+async def test_a_voice_that_is_not_installed_is_a_warning_not_silence(monkeypatch):
+    """`say -v Bogus` exits 0 and uses the system default (measured), so a typo
+    costs the British butler and reports nothing on its own."""
+    monkeypatch.delenv("JARVIS_TTS_BACKEND", raising=False)
+    monkeypatch.setenv("JARVIS_TTS_VOICE", "Danielle")
+    monkeypatch.setattr(preflight.shutil, "which", lambda name: "/usr/bin/say")
+    _say_listing(monkeypatch)
+    check = await preflight._check_voice(timeout=1.0)
+    assert check.status == STATUS_WARN and "Danielle" in check.message and check.remedy
+
+
+@pytest.mark.asyncio
+async def test_no_say_binary_is_a_failure(monkeypatch):
+    monkeypatch.delenv("JARVIS_TTS_BACKEND", raising=False)
+    monkeypatch.setattr(preflight.shutil, "which", lambda name: None)
+    check = await preflight._check_voice(timeout=1.0)
+    assert check.status == STATUS_FAIL and "say" in check.message
+
+
+@pytest.mark.asyncio
+async def test_the_fish_backend_still_needs_its_key(monkeypatch):
+    monkeypatch.setenv("JARVIS_TTS_BACKEND", "fish")
     monkeypatch.setenv("FISH_API_KEY", "sk-fish-abc123")
-    check = preflight._check_fish_api_key_sync()
-    assert check.status == STATUS_OK
+    assert (await preflight._check_voice(timeout=1.0)).status == STATUS_OK
 
-
-def test_fish_api_key_absent(monkeypatch):
     monkeypatch.delenv("FISH_API_KEY", raising=False)
-    check = preflight._check_fish_api_key_sync()
-    assert check.status == STATUS_FAIL
-    assert check.remedy
+    check = await preflight._check_voice(timeout=1.0)
+    assert check.status == STATUS_FAIL and check.remedy
+
+
+@pytest.mark.asyncio
+async def test_a_missing_fish_key_is_not_a_failure_on_the_local_backend(monkeypatch):
+    monkeypatch.delenv("JARVIS_TTS_BACKEND", raising=False)
+    monkeypatch.delenv("FISH_API_KEY", raising=False)
+    monkeypatch.delenv("JARVIS_TTS_VOICE", raising=False)
+    monkeypatch.setattr(preflight.shutil, "which", lambda name: "/usr/bin/say")
+    _say_listing(monkeypatch)
+    assert (await preflight._check_voice(timeout=1.0)).status == STATUS_OK
 
 
 # --- leftover ANTHROPIC_* ------------------------------------------------------
@@ -523,7 +577,7 @@ async def test_run_checks_runs_all_registered_checks(monkeypatch):
     names = {c.name for c in results}
     assert names == {
         "claude_cli", "claude_login", "accessibility", "screen_recording",
-        "fish_api_key", "anthropic_key_leftover", "cross_session_inbound",
+        "voice", "anthropic_key_leftover", "cross_session_inbound",
     }
 
 
@@ -532,7 +586,7 @@ async def test_run_checks_runs_all_registered_checks(monkeypatch):
 def test_spoken_summary_empty_when_all_ok():
     checks = [
         Check(name="claude_cli", status=STATUS_OK, message="ok"),
-        Check(name="fish_api_key", status=STATUS_OK, message="ok"),
+        Check(name="voice", status=STATUS_OK, message="ok"),
     ]
     assert preflight.spoken_summary(checks) == ""
 
@@ -566,7 +620,8 @@ def test_spoken_summary_says_screen_recording_in_words_a_person_would_use():
 def test_spoken_summary_names_two_failures_and_matches_the_example():
     checks = [
         Check(name="claude_login", status=STATUS_FAIL, message="Claude Code is not logged in."),
-        Check(name="fish_api_key", status=STATUS_FAIL, message="FISH_API_KEY is not set."),
+        Check(name="voice", status=STATUS_FAIL,
+              message="JARVIS_TTS_BACKEND=fish but FISH_API_KEY is not set."),
     ]
     summary = preflight.spoken_summary(checks)
     assert summary == (
