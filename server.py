@@ -47,8 +47,16 @@ def _parse_env_lines(text: str) -> list[tuple[str, str]]:
     return out
 
 
-# Load .env file if present
-_env_path = Path(__file__).parent / ".env"
+# Load .env file if present.
+#
+# JARVIS_ENV_FILE is honoured HERE too, not only by the settings endpoints
+# that write. It was read by the writer alone, so with the variable set the
+# server wrote one file and booted from another — and every test that reloads
+# this module inherited the developer's real settings, whatever `.env` the
+# test had prepared. That is how a `JARVIS_TTS_BACKEND=piper` saved from the
+# browser turned up inside the test suite.
+_env_override = os.getenv("JARVIS_ENV_FILE", "").strip()
+_env_path = Path(_env_override) if _env_override else Path(__file__).parent / ".env"
 if _env_path.exists():
     for _k, _v in _parse_env_lines(_env_path.read_text()):
         os.environ.setdefault(_k, _v)
@@ -601,10 +609,40 @@ async def _voice_emit(msg: dict) -> None:
         raise NoVoiceClient("no voice client connected")
 
 
+# A backend that cannot speak hands over to `say` (tts.synthesize_chunk), and
+# the user is TOLD once — not once per sentence, and not never. Never was the
+# old behaviour by omission: piper with an undownloaded model simply went
+# quiet, which reads as "JARVIS is broken" rather than "JARVIS needs a 63 MB
+# file". Once is the whole trick: the notice is itself spoken through this
+# same function, so announcing before the flag is set would announce forever.
+_voice_fallback: dict[str, Optional[str]] = {"from": None}
+
+_BACKEND_SPOKEN = {tts.BACKEND_PIPER: "Piper", tts.BACKEND_FISH: "Fish Audio",
+                   tts.BACKEND_SAY: "the system voice"}
+
+
+def _note_voice_fallback(configured: str) -> None:
+    if _voice_fallback["from"] == configured:
+        return
+    _voice_fallback["from"] = configured          # before speaking, always
+    named = _BACKEND_SPOKEN.get(configured, configured)
+    log.warning("voice: %s could not speak; using the system voice instead. "
+                "The TTS lines above say why.", named)
+    if speech is not None:
+        _spawn(speech.say(f"{named} has gone quiet, sir — I'm using the "
+                          f"system voice until it's sorted."))
+
+
 async def _synth_for_speech(text: str) -> Optional[bytes]:
+    configured = tts.resolve_backend()
     r = await tts.synthesize_chunk(text, api_key=FISH_API_KEY, voice_id=FISH_VOICE_ID, client=_tts_client)
     if r is None:
         return None
+    if r.backend != configured:
+        _note_voice_fallback(configured)
+    elif _voice_fallback["from"] is not None:
+        log.info("voice: %s is speaking again", configured)
+        _voice_fallback["from"] = None
     _session_tokens["tts_calls"] += 1
     _append_usage_entry(0, 0, "tts")
     log.debug(f"tts: {len(text)} chars, first byte {r.first_byte_sec:.2f}s, total {r.total_sec:.2f}s")
@@ -6694,6 +6732,12 @@ async def voice_handler(ws: WebSocket):
 # a restart.
 SETTABLE_ENV_KEYS = frozenset({
     "FISH_API_KEY", "FISH_VOICE_ID", "USER_NAME", "HONORIFIC",
+    # The voice. Settable because choosing it is an ordinary preference, and
+    # `_write_env_key` also updates os.environ, so a change takes effect on
+    # the next sentence rather than on the next restart. Each is checked in
+    # `_env_value_problem` below: a backend must be one JARVIS has, and a
+    # piper voice must NAME a model, never point at a file.
+    "JARVIS_TTS_BACKEND", "JARVIS_TTS_VOICE", "JARVIS_PIPER_VOICE",
 })
 
 # A value may not carry anything that ends the line it is written on.
@@ -6753,12 +6797,32 @@ def _env_value_problem(key: str, value: str) -> str | None:
         return "A setting cannot contain a control character"
     if _parse_env_lines(f"{key}={value}") != [(key, value)]:
         return "A setting cannot begin or end with a space or a quote"
+    if key == "JARVIS_TTS_BACKEND" and value and value not in tts.BACKENDS:
+        return f"The voice backend must be one of: {', '.join(tts.BACKENDS)}"
+    if key == "JARVIS_PIPER_VOICE" and value and not tts.is_safe_voice_name(value):
+        # A model is loaded and executed by onnxruntime. Over HTTP this may
+        # only be the NAME of one in the voices directory; a hand-edited .env
+        # can still give a path, because that is the user's own machine.
+        return "A piper voice is the name of an installed model, not a path"
     return None
+
+
+# The placeholder `.env.example` ships. A key that is still this is not a
+# key, and treating it as one offers the user a backend that cannot speak.
+FISH_KEY_PLACEHOLDER = "your-fish-audio-api-key-here"
+
+
+def _fish_key_configured(env_dict: dict[str, str] | None = None) -> str:
+    raw = (env_dict or {}).get("FISH_API_KEY") if env_dict is not None else FISH_API_KEY
+    raw = (raw or "").strip()
+    return "" if raw == FISH_KEY_PLACEHOLDER else raw
 
 
 def _env_file_path() -> Path:
     # JARVIS_ENV_FILE exists so the test suite cannot write into the
-    # developer's live .env — the same reasoning as JARVIS_DATA_DIR.
+    # developer's live .env — the same reasoning as JARVIS_DATA_DIR. The
+    # boot loader at the top of this file resolves it the same way, so the
+    # file JARVIS reads and the file JARVIS writes are always the same one.
     override = os.getenv("JARVIS_ENV_FILE", "").strip()
     return Path(override) if override else Path(__file__).parent / ".env"
 
@@ -6872,8 +6936,13 @@ async def api_settings_status():
         "uptime_seconds": int(time.time() - _session_start),
         "tts_backend": tts.resolve_backend(),
         "tts_voice": tts.resolve_voice(),
+        "tts_piper_voice": tts.resolve_piper_voice(),
+        "tts_piper_voices": tts.installed_piper_voices(),
+        "tts_fallback_from": _voice_fallback["from"],
+        "tts_backends_ready": tts.backends_ready(
+            fish_key=_fish_key_configured(env_dict)),
         "env_keys_set": {
-            "fish_audio": bool(env_dict.get("FISH_API_KEY", "").strip() and env_dict.get("FISH_API_KEY", "") != "your-fish-audio-api-key-here"),
+            "fish_audio": bool(_fish_key_configured(env_dict)),
             "fish_voice_id": bool(env_dict.get("FISH_VOICE_ID", "").strip()),
             "user_name": env_dict.get("USER_NAME", ""),
         },

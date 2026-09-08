@@ -1,0 +1,15 @@
+# Optional: the piper voice backend (JARVIS_TTS_BACKEND=piper).
+#
+# Deliberately NOT in requirements.txt. piper-tts brings onnxruntime and
+# numpy — 160 MB of site-packages, measured — and a voice is a further ~63 MB
+# model. JARVIS speaks perfectly well without any of it through macOS `say`,
+# so this is a choice, not a prerequisite.
+#
+#     .venv/bin/pip install -r requirements-piper.txt
+#     .venv/bin/python -m piper.download_voices --download-dir data/voices en_GB-alan-medium
+#
+# Install it into the interpreter that runs the server: JARVIS looks for
+# `piper` beside `sys.executable` first, because the server runs as
+# `.venv/bin/python server.py` without the venv activated, and `which piper`
+# finds nothing then (measured).
+piper-tts>=1.8.0

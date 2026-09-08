@@ -15,6 +15,10 @@ interface StatusResponse {
   uptime_seconds: number;
   tts_backend: string;
   tts_voice: string;
+  tts_piper_voice: string;
+  tts_piper_voices: string[];
+  tts_backends_ready: Record<string, boolean>;
+  tts_fallback_from: string | null;
   env_keys_set: {
     fish_audio: boolean;
     fish_voice_id: boolean;
@@ -73,6 +77,35 @@ function buildPanelHTML(): string {
 
       <div class="settings-body">
 
+        <!-- Voice -->
+        <section class="settings-section" id="section-voice">
+          <h3>Voice</h3>
+
+          <div class="settings-field">
+            <label>Synthesiser</label>
+            <select id="input-tts-backend">
+              <option value="say">macOS say — local, fastest</option>
+              <option value="piper">piper — local, neural</option>
+              <option value="fish">Fish Audio — hosted, needs a key</option>
+            </select>
+          </div>
+
+          <div class="settings-field" id="field-say-voice">
+            <label>System voice</label>
+            <input type="text" id="input-tts-voice" placeholder="Daniel" />
+          </div>
+
+          <div class="settings-field" id="field-piper-voice">
+            <label>piper model</label>
+            <select id="input-piper-voice"></select>
+          </div>
+
+          <div class="settings-actions">
+            <button class="settings-btn primary" id="btn-save-voice">Save Voice</button>
+          </div>
+          <p class="settings-voice-note" id="tts-voice-note"></p>
+        </section>
+
         <!-- API Keys -->
         <section class="settings-section" id="section-api-keys">
           <h3>API Keys</h3>
@@ -93,8 +126,6 @@ function buildPanelHTML(): string {
               <button class="settings-btn" id="btn-save-voice-id">Save</button>
             </div>
           </div>
-
-          <p class="settings-voice-note" id="tts-voice-note"></p>
 
           <div class="settings-actions">
             <button class="settings-btn primary" id="btn-save-keys">Save Keys</button>
@@ -199,13 +230,7 @@ async function loadStatus() {
     setDotStatus("status-fish",
       status.env_keys_set.fish_audio ? "green" : fishInUse ? "red" : "off");
 
-    const voiceNote = document.getElementById("tts-voice-note");
-    if (voiceNote) {
-      voiceNote.textContent = fishInUse
-        ? "Speaking through Fish Audio; the key above is required."
-        : `Speaking locally through macOS \`say\` (${status.tts_voice}) — no key needed. `
-          + "The key above is read only with JARVIS_TTS_BACKEND=fish in .env.";
-    }
+    renderVoiceSection(status);
 
     // System info
     const portEl = document.getElementById("sysinfo-port");
@@ -253,6 +278,25 @@ function wireEvents() {
   document.getElementById("settings-backdrop")?.addEventListener("click", closeSettings);
 
   // Save keys
+  document.getElementById("input-tts-backend")?.addEventListener("change", async () => {
+    const chosen = (document.getElementById("input-tts-backend") as HTMLSelectElement).value;
+    const status = await apiGet<StatusResponse>("/api/settings/status");
+    showVoiceFieldsFor(chosen, status);
+  });
+
+  document.getElementById("btn-save-voice")?.addEventListener("click", async () => {
+    const backend = (document.getElementById("input-tts-backend") as HTMLSelectElement).value;
+    const sayVoice = (document.getElementById("input-tts-voice") as HTMLInputElement).value.trim();
+    const piperVoice = (document.getElementById("input-piper-voice") as HTMLSelectElement).value.trim();
+
+    // Both voices are saved whichever backend is chosen, so switching back
+    // and forth keeps each one's own voice.
+    await apiPost("/api/settings/keys", { key_name: "JARVIS_TTS_BACKEND", key_value: backend });
+    if (sayVoice) await apiPost("/api/settings/keys", { key_name: "JARVIS_TTS_VOICE", key_value: sayVoice });
+    if (piperVoice) await apiPost("/api/settings/keys", { key_name: "JARVIS_PIPER_VOICE", key_value: piperVoice });
+    await loadStatus();
+  });
+
   document.getElementById("btn-save-keys")?.addEventListener("click", async () => {
     const fishKey = (document.getElementById("input-fish-key") as HTMLInputElement).value.trim();
 
@@ -299,6 +343,89 @@ function wireEvents() {
   document.getElementById("btn-setup-next")?.addEventListener("click", advanceSetup);
 }
 
+function renderVoiceSection(status: StatusResponse) {
+  const select = document.getElementById("input-tts-backend") as HTMLSelectElement | null;
+  const ready = status.tts_backends_ready || {};
+
+  if (select) {
+    // A backend that cannot speak is still LISTED — hiding it makes "why is
+    // piper not here?" a question with no answer on the page — but it says so
+    // and cannot be chosen by accident. The one in use is never disabled: the
+    // user must be able to see what he is currently set to.
+    for (const opt of Array.from(select.options)) {
+      const usable = ready[opt.value] !== false;
+      opt.disabled = !usable && opt.value !== status.tts_backend;
+      opt.textContent = opt.textContent.replace(/ — unavailable$/, "")
+        + (usable ? "" : " — unavailable");
+    }
+    select.value = status.tts_backend;
+  }
+
+  const sayVoice = document.getElementById("input-tts-voice") as HTMLInputElement | null;
+  if (sayVoice && document.activeElement !== sayVoice) sayVoice.value = status.tts_voice || "";
+  // Only models that are actually downloaded may be chosen. Typing a name
+  // JARVIS does not have is not a recoverable mistake — he goes silent
+  // mid-sentence, which is what "piper stopped working" looked like.
+  const piperVoice = document.getElementById("input-piper-voice") as HTMLSelectElement | null;
+  if (piperVoice && document.activeElement !== piperVoice) {
+    const installed = status.tts_piper_voices || [];
+    const current = status.tts_piper_voice || "";
+    const names = installed.includes(current) || !current
+      ? installed : [...installed, current];
+    piperVoice.textContent = "";
+    for (const name of names) {
+      const opt = document.createElement("option");
+      opt.value = name;
+      opt.textContent = installed.includes(name) ? name : `${name} — not downloaded`;
+      opt.disabled = !installed.includes(name);
+      piperVoice.appendChild(opt);
+    }
+    piperVoice.disabled = installed.length === 0;
+    if (current) piperVoice.value = current;
+  }
+
+  showVoiceFieldsFor(select?.value || status.tts_backend, status);
+}
+
+// He says this out loud once, when it happens. The panel is where it stays
+// readable afterwards — a spoken sentence is gone the moment it is said.
+function fallbackNotice(status: StatusResponse): string {
+  if (!status.tts_fallback_from) return "";
+  return `${status.tts_fallback_from} could not speak, so he is using macOS say instead. `;
+}
+
+function showVoiceFieldsFor(backend: string, status: StatusResponse) {
+  const sayField = document.getElementById("field-say-voice");
+  if (sayField) sayField.style.display = backend === "say" ? "" : "none";
+  const piperField = document.getElementById("field-piper-voice");
+  if (piperField) piperField.style.display = backend === "piper" ? "" : "none";
+
+  const note = document.getElementById("tts-voice-note");
+  if (!note) return;
+  const fallback = backend === status.tts_backend ? fallbackNotice(status) : "";
+  if (backend === "fish") {
+    note.textContent = fallback + (status.env_keys_set.fish_audio
+      ? "Hosted: every sentence is a request to fish.audio, billed to that account."
+      : "Fish Audio needs a key in API Keys below, and a server restart to pick it up.");
+  } else if (backend === "piper") {
+    const installed = status.tts_piper_voices || [];
+    if (installed.length === 0) {
+      note.textContent = fallback + "No piper models are downloaded. In the repo: "
+        + "`pip install -r requirements-piper.txt` then "
+        + "`python -m piper.download_voices --download-dir data/voices en_GB-alan-medium`.";
+    } else if (!installed.includes(status.tts_piper_voice)) {
+      note.textContent = fallback + `${status.tts_piper_voice} is set but not downloaded. `
+        + "Pick one of the installed models, or download that one and reload.";
+    } else {
+      note.textContent = fallback + "Local and offline. Better than macOS say, and about a fifth of a "
+        + "second slower per sentence. Models live in data/voices.";
+    }
+  } else {
+    note.textContent = fallback + "Local, offline and instant. `say -v '?'` in a terminal lists the voices; "
+      + "System Settings → Accessibility → Spoken Content adds better ones.";
+  }
+}
+
 // ---------------------------------------------------------------------------
 // First-time setup wizard
 // ---------------------------------------------------------------------------
@@ -313,7 +440,10 @@ function enterSetupMode() {
   const nav = document.getElementById("setup-nav");
   if (nav) nav.style.display = "flex";
 
-  // Hide sections except API keys
+  // Hide sections except API keys — the voice section included: the wizard
+  // only ever appears when the backend is Fish and its key is missing.
+  const voice = document.getElementById("section-voice");
+  if (voice) voice.style.display = "none";
   showSetupStep(0);
 }
 
@@ -346,7 +476,8 @@ async function advanceSetup() {
     if (nav) nav.style.display = "none";
 
     // Show all sections
-    ["section-api-keys", "section-status", "section-preferences", "section-sysinfo"].forEach((id) => {
+    ["section-voice", "section-api-keys", "section-status", "section-preferences",
+     "section-sysinfo"].forEach((id) => {
       const el = document.getElementById(id);
       if (el) el.style.display = "";
     });

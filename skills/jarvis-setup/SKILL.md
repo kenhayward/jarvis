@@ -116,6 +116,33 @@ What can still go wrong, in order of how often:
   like text-only replies in the browser, never a crash. The reason is in the
   server log, prefixed `TTS`.
 
+## piper: two traps, both measured
+
+`JARVIS_TTS_BACKEND=piper` is the better local voice. It fails in two ways
+that look identical from the browser (silence) and are not:
+
+1. **`piper` is installed but not found.** The server runs as
+   `.venv/bin/python server.py` *without the venv activated*, so `.venv/bin`
+   is not on `PATH` and `shutil.which("piper")` returns None while
+   `.venv/bin/piper` sits right there. `tts.piper_bin()` therefore looks
+   beside `sys.executable` first. If someone installed piper into a
+   *different* interpreter (a `pip install` that went to the system Python),
+   that is the actual problem — install it into the venv the server runs on.
+2. **The model is not downloaded.** A voice is a `.onnx` plus its
+   `.onnx.json` in `data_paths.voices_dir()` (`data/voices` by default), about
+   63 MB. JARVIS will not fetch one mid-sentence, on purpose. The exact
+   command is in the preflight remedy and the server log:
+   `python -m piper.download_voices --download-dir data/voices en_GB-alan-medium`
+
+Preflight distinguishes them: "piper isn't installed" vs "my piper voice
+isn't downloaded".
+
+Since the fallback landed, neither of these makes JARVIS mute: `say` takes
+over and he says so once ("Piper has gone quiet, sir — I'm using the system
+voice until it's sorted"). So the symptom to ask about is no longer silence,
+it is **the wrong voice** — and `/api/settings/status` names the backend that
+failed in `tts_fallback_from`.
+
 ## Connecting a service: one file, and it is not the one you'd guess
 
 JARVIS ships connected to nothing — no calendar, no mail, no notes. He

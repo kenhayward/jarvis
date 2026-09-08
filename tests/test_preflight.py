@@ -430,6 +430,41 @@ async def test_no_say_binary_is_a_failure(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_the_piper_backend_reports_its_own_two_failures(monkeypatch, tmp_path):
+    """An optional dependency and a 63 MB download are different problems with
+    different commands, and a preflight that says "no voice" for both sends
+    the user to the wrong one."""
+    import tts
+    monkeypatch.setenv("JARVIS_TTS_BACKEND", "piper")
+    monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path))
+    monkeypatch.delenv("JARVIS_PIPER_VOICE", raising=False)
+
+    monkeypatch.setattr(tts, "piper_bin", lambda: None)
+    check = await preflight._check_voice(timeout=1.0)
+    assert check.status == STATUS_FAIL
+    assert "requirements-piper.txt" in (check.remedy or ""), "the remedy is the install"
+
+    monkeypatch.setattr(tts, "piper_bin", lambda: "/opt/piper")
+    check = await preflight._check_voice(timeout=1.0)
+    assert check.status == STATUS_FAIL and "download_voices" in (check.remedy or "")
+
+    voices = tmp_path / "voices"
+    voices.mkdir()
+    (voices / f"{tts.DEFAULT_PIPER_VOICE}.onnx").write_bytes(b"onnx")
+    check = await preflight._check_voice(timeout=1.0)
+    assert check.status == STATUS_OK and tts.DEFAULT_PIPER_VOICE in check.message
+
+
+def test_the_spoken_summary_tells_piper_s_two_failures_apart():
+    missing_binary = Check(name="voice", status=STATUS_FAIL,
+                           message="JARVIS_TTS_BACKEND=piper but `piper` was not found.")
+    missing_voice = Check(name="voice", status=STATUS_FAIL,
+                          message="piper voice 'en_GB-alan-medium' is not installed in /x/voices.")
+    assert "piper isn't installed" in preflight.spoken_summary([missing_binary])
+    assert "voice isn't downloaded" in preflight.spoken_summary([missing_voice])
+
+
+@pytest.mark.asyncio
 async def test_the_fish_backend_still_needs_its_key(monkeypatch):
     monkeypatch.setenv("JARVIS_TTS_BACKEND", "fish")
     monkeypatch.setenv("FISH_API_KEY", "sk-fish-abc123")

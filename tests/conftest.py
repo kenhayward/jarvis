@@ -11,6 +11,26 @@ def _never_spawn_a_real_brain(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _never_really_synthesise(monkeypatch):
+    """No test may spawn a real synthesiser.
+
+    `say` and `piper` are subprocesses like `osascript` and `claude`, and the
+    suite fakes those at the seam. This became load-bearing when a failing
+    backend started falling back to `say`: a test that mocked only the hosted
+    transport would quietly run the real thing on the developer's Mac. A test
+    that wants a local backend sets its own `_spawn_synth`, and monkeypatch
+    lets the later one win.
+    """
+    import tts
+
+    async def _blocked(argv, *, text, timeout):
+        raise AssertionError(
+            f"a test tried to spawn {argv[0]!r} for real; mock tts._spawn_synth")
+
+    monkeypatch.setattr(tts, "_spawn_synth", _blocked)
+
+
+@pytest.fixture(autouse=True)
 def _never_post_a_real_notification(monkeypatch, request):
     """No test may spam the developer's Notification Centre.
 
