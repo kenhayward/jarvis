@@ -3920,7 +3920,18 @@ async def tool_steer_session(args: dict) -> str:
 # place" speaks it and a path legitimately holds almost any punctuation. The
 # residual is prose in a header line, for the price of two same-named
 # directories; it is accepted, and it is not parity with the name wall.
-_PLAIN_PATH_RE = _action_re.compile(r"/[^\x00-\x1f\x7f-\x9f<>\"=\u2028\u2029]{0,299}")
+#
+# The leading alternation says "absolute", which is the only structural claim
+# this wall makes about a path; it is NOT a third thing being walled. A bare
+# `/` said that on POSIX and said it about nothing on Windows, where absolute
+# means `C:\\u2026` or a `\\server\share` UNC \u2014 so on Windows this matched no path
+# at all, `_project_candidates` came back empty, and every project-scoped tool
+# answered "I don't know of any projects to start that in, sir." Measured: it
+# was the whole of the 46 `tests/test_repo_tools.py` failures, including the
+# traversal refusals, which were passing on the wrong sentence.
+_PLAIN_PATH_RE = _action_re.compile(
+    r"(?:/|[A-Za-z]:[\\/]|\\\\)"
+    r"[^\x00-\x1f\x7f-\x9f<>\"=\u2028\u2029]{0,299}")
 
 
 def _project_name_speakable(name) -> bool:
@@ -5469,9 +5480,19 @@ def _repo_refusal(refused: Exception, name: str) -> str:
 def _repo_relative(root: Path, resolved: Path) -> str:
     """The path, relative to the project, AS IT IS — for inside a block.
     A filename on APFS may hold anything but `/` and NUL, so this value is
-    never put in a header line; `_said_path` is for that."""
+    never put in a header line; `_said_path` is for that.
+
+    `as_posix()`, so the separator is `/` on both platforms. It is lossless
+    either way — no filename may contain the separator it is replacing — and
+    without it Windows returned `src\\billing.ts`, which then failed
+    `_PLAIN_NAME_RE` (that class admits `/`, not `\\`) and made `_said_path`
+    fall back to "that file" for EVERY file JARVIS named. It also kept the
+    two platforms writing different text into the untrusted block for the
+    same file, which the brain reads.
+    """
     try:
-        return str(resolved.relative_to(Path(os.path.realpath(str(root)))))
+        return resolved.relative_to(
+            Path(os.path.realpath(str(root)))).as_posix()
     except ValueError:                       # cannot happen after containment
         return resolved.name
 

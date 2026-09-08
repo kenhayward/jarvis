@@ -54,11 +54,25 @@ class _Notifier:
         return self._ok
 
 
+def _notifier_modules():
+    """Every notifications implementation, because the announcement path
+    under test is platform-neutral and reaches whichever one `current()`
+    holds. Patching only the macOS module left these tests asserting
+    against a fake nothing called on Windows. See `tests/conftest.py`."""
+    from jarvis_platform.macos import notifications as macos_notifier
+    from jarvis_platform.windows import notifications as windows_notifier
+    return (macos_notifier, windows_notifier)
+
+
+def _patch_notifier(monkeypatch, *, available, notify):
+    for module in _notifier_modules():
+        monkeypatch.setattr(module, "available", lambda: available)
+        monkeypatch.setattr(module, "notify", notify)
+
+
 def _fake_notifier(monkeypatch, ok=True):
-    from jarvis_platform.macos import notifications as notifier
     fake = _Notifier(ok)
-    monkeypatch.setattr(notifier, "available", lambda: True)
-    monkeypatch.setattr(notifier, "notify", fake.notify)
+    _patch_notifier(monkeypatch, available=True, notify=fake.notify)
     return fake
 
 
@@ -97,13 +111,10 @@ async def test_a_failing_notifier_does_not_break_the_announcement(wired, monkeyp
     speech = FakeSpeech()
     monkeypatch.setattr(server, "speech", speech)
 
-    from jarvis_platform.macos import notifications as notifier
-
     async def explode(*a, **k):
         raise RuntimeError("osascript is on fire")
 
-    monkeypatch.setattr(notifier, "available", lambda: True)
-    monkeypatch.setattr(notifier, "notify", explode)
+    _patch_notifier(monkeypatch, available=True, notify=explode)
 
     await server._announce_needs_you(_event())      # must not raise
 
@@ -117,13 +128,10 @@ async def test_a_notification_failure_never_reaches_the_watcher(wired, monkeypat
     server = wired
     monkeypatch.setattr(server, "speech", FakeSpeech())
 
-    from jarvis_platform.macos import notifications as notifier
-
     async def explode(*a, **k):
         raise RuntimeError("osascript is on fire")
 
-    monkeypatch.setattr(notifier, "available", lambda: True)
-    monkeypatch.setattr(notifier, "notify", explode)
+    _patch_notifier(monkeypatch, available=True, notify=explode)
 
     server._on_session_event(_event())
     await asyncio.sleep(0.05)
@@ -138,8 +146,8 @@ async def test_an_unavailable_notifier_is_not_called(wired, monkeypatch):
     server = wired
     monkeypatch.setattr(server, "speech", FakeSpeech())
     fake = _fake_notifier(monkeypatch)
-    from jarvis_platform.macos import notifications as notifier
-    monkeypatch.setattr(notifier, "available", lambda: False)
+    for _m in _notifier_modules():
+        monkeypatch.setattr(_m, "available", lambda: False)
 
     await server._announce_needs_you(_event())
 

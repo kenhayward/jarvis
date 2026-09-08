@@ -40,16 +40,27 @@ def _never_post_a_real_notification(monkeypatch, request):
     the macOS host exposes modules rather than class instances.
     test_notifier.py is exempt: it tests notify() itself and mocks the
     subprocess boundary directly.
+
+    EVERY implementation is patched, not just the one this platform runs.
+    Naming `jarvis_platform.macos` alone made this rail silently inert off
+    macOS — `current()` is `WINDOWS` there, so the patch landed on a module
+    nothing calls and the suite posted real Windows toasts throughout a run
+    (observed 2026-09-08). Patching by platform is what created that hole,
+    so the list is deliberately not conditioned on `sys.platform`: an
+    implementation that cannot run here is patched anyway, at no cost, and
+    the rail cannot rot the next time a host is added.
     """
     if request.module.__name__.endswith("test_notifier"):
         return
-    from jarvis_platform.macos import notifications as notifier
+    from jarvis_platform.macos import notifications as macos_notifier
+    from jarvis_platform.windows import notifications as windows_notifier
 
     async def _blocked(*args, **kwargs):
-        raise AssertionError("a test tried to post a real macOS notification; "
-                             "mock jarvis_platform.macos.notifications.notify")
+        raise AssertionError("a test tried to post a real notification; mock "
+                             "the notifications module for this platform")
 
-    monkeypatch.setattr(notifier, "notify", _blocked)
+    for module in (macos_notifier, windows_notifier):
+        monkeypatch.setattr(module, "notify", _blocked)
 
 
 @pytest.fixture(autouse=True)
