@@ -62,16 +62,34 @@ suite could never have caught them:
 
 ### Known live problem, not yet fixed
 
-**The suite opens real console windows on Windows.** `tests/test_start_build.py:715`
-has a fixture whose docstring reads "No test may open a real Terminal
-window" — and it patches `jarvis_platform.macos.launcher` by name. On
-Windows `current()` is `WINDOWS`, so the patch lands on a module nothing
-calls and `windows/launcher.py` really spawns `wt`/`cmd.exe`. Observed: a
-console window appeared running `npm` in a pytest tmp dir. The fix is to
-patch `jp.current().launcher` instead of the macOS module, but it is a
-fixture macOS depends on too, so it wants the macOS gate run on it.
-Suspect the same pattern anywhere a test names a `jarvis_platform.macos.*`
-module directly.
+**Every safety-rail fixture patches `jarvis_platform.macos.*` BY NAME, so
+on Windows it patches a module nothing calls and the real thing runs.**
+Two were observed doing it during one suite run on 2026-09-08:
+
+* `tests/conftest.py:46` — autouse, therefore the WHOLE suite. Its
+  docstring is "No test may spam the developer's Notification Centre."
+  Real Windows toasts appeared on screen throughout the run.
+* `tests/test_start_build.py:715` — "No test may open a real Terminal
+  window." A console window opened running `npm` in a pytest tmp dir.
+
+`tests/test_needs_you_notification.py` (four sites) has the same shape and
+is likely a third.
+
+The fix is to patch what `jp.current()` actually returns rather than the
+macOS module by name. These are fixtures macOS depends on too, so the
+change wants the macOS gate run on it.
+
+There is one accidental benefit, and it is worth stating because it is the
+only reason a guess in the table above could be closed: the toasts that
+escaped are what CONFIRMED the AUMID. An unregistered one returns True and
+shows nothing, so no test could ever have proved this — only a person
+looking at the screen. Do not "fix" the fixture and consider the AUMID
+still unverified; it is verified, by exactly this accident.
+
+Distinguish these from the tests that name a macOS module ON PURPOSE
+(`test_notifier.py`, `test_applescript_escape.py`, `test_answer_dialog.py`
+and similar) — those are testing the macOS implementation itself and are
+correct as they are. Only the platform-neutral safety rails are wrong.
 
 ## The one thing to understand before touching anything
 
@@ -87,7 +105,7 @@ The guesses are isolated so a real box corrects each in one place:
 |---|---|---|---|
 | what `icacls <path>` prints | `windows/secrets.py::_parse_aces` | `_ICACLS_OURS`, `_ICACLS_INHERITED` | **confirmed** 2026-09-08, one correction |
 | what `whoami /user /fo csv /nh` prints | `windows/secrets.py::_parse_whoami` | `_WHOAMI_SAMPLE` | **confirmed** 2026-09-08, exact |
-| the toast AUMID | `windows/notifications.py::_AUMID` | nothing — it fails silently, see below | **still open** — `notify()` returns True, no eyeball yet |
+| the toast AUMID | `windows/notifications.py::_AUMID` | nothing — it fails silently, see below | **confirmed** 2026-09-08 — real toasts seen on screen |
 | `wt` / `cmd.exe` argv | `windows/launcher.py::_terminal_argv` | `tests/test_windows_platform.py` | not yet run |
 
 All the samples are in `tests/test_windows_platform.py`. Replace one with
@@ -187,9 +205,13 @@ Each of these takes a minute and either confirms a sample or replaces one.
    it. This is the property that stops JARVIS trusting a token somebody else
    chose and knows. **Still open** — the two above were read-only, this one
    writes to the token path and was left for a deliberate run.
-4. **A toast actually appears.** `_AUMID` is the likely failure and it fails
-   *silently* — an unregistered AUMID makes `Show()` succeed and display
-   nothing. Drive it directly rather than waiting for a real notification:
+4. ~~**A toast actually appears.**~~ — **DONE 2026-09-08. The AUMID is
+   right.** Real toasts were seen on screen during a suite run, which is
+   the only kind of evidence that settles this: an unregistered AUMID makes
+   `Show()` succeed and display nothing, so `notify()` returning True
+   proves nothing and no test can prove it either. The toasts escaped
+   because of the fixture defect described above — an accident, but a
+   conclusive one. If you ever need to re-check it by hand:
    ```
    python -c "import asyncio; from jarvis_platform.windows import notifications as n; print(asyncio.run(n.notify('JARVIS','test','sub')))"
    ```
