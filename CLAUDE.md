@@ -1,5 +1,8 @@
 # JARVIS — Voice AI Assistant
 
+This file provides guidance to Claude Code (claude.ai/code) when working with
+code in this repository.
+
 ## Overview
 JARVIS (Just A Rather Very Intelligent System) is a voice-first AI assistant for macOS. It runs locally on your machine, driving Claude Code for development tasks — every execution recorded as a *run* and watchable at `/dashboard`.
 
@@ -37,7 +40,7 @@ backend the same request returns 200. The page loads either way, which is why
 this presents as "the UI is up but nothing works" rather than as an error.
 
 ## Architecture
-- **Backend**: FastAPI + Python (server.py, ~5800 lines)
+- **Backend**: FastAPI + Python (server.py, ~7000 lines)
 - **Frontend**: Vite + TypeScript + Three.js (audio-reactive orb)
 - **Communication**: WebSocket (JSON messages + binary audio)
 - **AI**: a long-lived Claude Code process (`brain.py`, Sonnet by default) on
@@ -133,7 +136,33 @@ arbitrary LLM and file content, so everything goes through
 - `work_mode.py` — Vestigial. `is_casual_question` is imported by `server.py`
   and called by nothing; the Haiku-vs-`claude -p` routing it classified for is
   gone. Left in place only because a test pins it
+- `gh_lookup.py` — Repository questions go to `gh`, not to a web search
+  (measured: 0.5s vs 9-16s through a `claude -p` turn). It takes what a person
+  *says* ("my Arc Loop repo"), never picks between several matches, and every
+  `gh` call is an argument list with a deadline — no shell
+- `usage_scan.py` — Per-*session* token usage, parsed off Claude Code's own
+  `~/.claude*/projects/**.jsonl` transcripts (`usage_store.py` answers the
+  different question of subscription-window headroom). Dedupes by
+  `(st_dev, st_ino)` because the config roots are hardlinked, and rescans
+  incrementally because the corpus runs to hundreds of MB.
+  Both it and `session_watch.py` read every config root
+  (`~/.claude`, `~/.claude-orcha`, plus `JARVIS_CLAUDE_CONFIG_DIRS`) through
+  `session_watch.config_roots`
 - `data_paths.py` — Single source of truth for where data is written
+
+## Other directories
+- `jarvis_home/` — The brain's own home, templated into the data dir by
+  `data_paths.py`: `CLAUDE.md` is JARVIS's system prompt (how he speaks; it
+  `@`-imports the memory index), and `connections.json` is the *only* file
+  read for MCP servers, because the brain runs with `--strict-mcp-config`.
+  `data_paths.py` pins a hash of each — change either and update the hash list
+- `skills/jarvis-setup/SKILL.md` — Setup and debugging facts learned live
+  (mic-in-Chrome-only, the per-port permission trap, expired logins,
+  Accessibility). Read it before answering a setup question
+- `migrations/` — One-off SQLite backfills, imported by name from
+  `server.py` at startup (`001_dispatches_to_runs.py`); idempotent
+- `scripts/` — Generates the README's GIFs (`make_orb_loop.py`,
+  `make_dashboard_walkthrough.py`), not part of the running system
 
 ## Where the author's own notes live
 This repository ships nothing personal. Research notes, milestone
@@ -183,6 +212,24 @@ JARVIS builds**. It is only this repository's own copies that are gone.
 - `JARVIS_ENV_FILE` (optional) — where the settings endpoints read and write
   `.env`. Defaults to the repo's own; the test suite redirects it so no test
   can rewrite the developer's real configuration
+- `JARVIS_PORT` (optional, default `8340`) — set from `--port` by `main()`.
+  `frontend/vite.config.ts` hard-codes 8340, so moving it breaks the dev proxy
+- `JARVIS_RUN_MODEL` (optional, default `sonnet`) — model for spawned runs.
+  Like the brain's, it is always emitted as an explicit `--model`; the CLI's
+  own default is never relied on
+- `JARVIS_PROJECTS_DIR` (optional, default `~/Projects`) — where
+  `project_maker.py` may create directories, and the root paths are validated
+  against. `JARVIS_PROJECT_ROOTS` overrides what counts as "inside a project"
+  for the scan, and `JARVIS_SCAN_BUDGET` / `JARVIS_SCAN_CACHE` bound it
+- `JARVIS_CLAUDE_PATH` (optional) — the `claude` binary spawned for the brain
+  and every run. Together with `JARVIS_PROJECT_ROOTS` it is why the settings
+  endpoints validate `.env` writes: a newline in a value would let a POSTed
+  preference redirect the binary JARVIS executes
+- `JARVIS_CLAUDE_CONFIG_DIRS` (optional) — extra Claude config roots beyond
+  `~/.claude` and `~/.claude-orcha`, for session watching and usage scanning
+- `JARVIS_BIND_HOST` / `JARVIS_SCHEME` are set by `main()` from `--host` and
+  whether the certs exist; the web boundary reads them. Set the flags, not
+  these
 
 ## Testing
 Run the suite as:
@@ -202,6 +249,30 @@ the file) because it drives `browser.py`, which launches Chromium with
 Everything else uses fakes at the subprocess seam — `screencapture`, `sips`,
 `osascript` and `claude` are never really invoked. If you add a test that
 needs the network, a real window, or a real `claude`, mark it.
+
+One file, or one test:
+
+```bash
+pytest tests/test_run_store.py
+pytest tests/test_run_store.py::test_name -x
+```
+
+`tests/conftest.py` puts autouse fixtures between every test and the
+developer's real machine: `JARVIS_BRAIN_AUTOSTART=0`, a tmp `JARVIS_DATA_DIR`,
+`JARVIS_ENV_FILE` and `JARVIS_PROJECTS_DIR`, and a `notifier.notify` that
+raises. Do not defeat them — a test that needs its own root still sets the
+variable itself.
+
+The frontend is part of the gate. CI (`.github/workflows/tests.yml`, macOS,
+Python 3.12) runs these before pytest, so run them after touching
+`frontend/`:
+
+```bash
+cd frontend && npx tsc --noEmit && npm run build
+```
+
+Python 3.11+ is required — the code uses `X | None` at runtime, so the
+`python3` macOS ships with dies at import.
 
 ## Conventions
 - JARVIS personality: British butler, dry wit, economy of language
