@@ -155,6 +155,12 @@ the commit why the alternative was worse.
   `macos/` declares all of them, so on a Mac this layer is invisible, and
   holds the implementations as MODULES (not class instances) so the test
   suite can keep patching them across an `importlib.reload(server)`.
+  `windows/` declares only what it has actually built — add a capability in
+  the same commit as its implementation, never before, or the whole design
+  becomes a wish list. Its modules are written from documentation rather
+  than measured on a machine, which is the opposite of this repo's usual
+  rule; each says so, and isolates the guess so a real box corrects it in
+  one place.
   Four consumers read it and they must not disagree: the `/internal/tool`
   dispatch gate, `brain.granted_tools`, the `JARVIS_DISABLED_TOOLS` env block
   in `_write_mcp_config`, and `preflight`'s `_CHECK_CAPABILITIES`. **Not**

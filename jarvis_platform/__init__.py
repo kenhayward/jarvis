@@ -31,11 +31,14 @@ from .base import (  # noqa: F401  (re-exported: this is the public surface)
     Host,
 )
 from .macos import MACOS
+from .windows import WINDOWS
 
 
 def _detect() -> Host:
     if sys.platform == "darwin":
         return MACOS
+    if sys.platform == "win32":
+        return WINDOWS
     # Deliberately not a raise. JARVIS must be able to start on a platform
     # whose host has not been written yet — the portable two thirds of him
     # (the run pipeline, memory, the dashboard, the repository readers) work

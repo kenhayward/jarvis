@@ -13,6 +13,9 @@ import time
 from pathlib import Path
 from typing import Optional
 
+import jarvis_platform
+import jarvis_platform.base
+
 log = logging.getLogger("jarvis.data_paths")
 
 _DEFAULT = Path(__file__).parent / "data"
@@ -359,97 +362,17 @@ def tool_token_path() -> Path:
     return brain_home() / "tool-token"
 
 
-class PrivateFileUnsupported(RuntimeError):
-    """This platform cannot yet promise a file only its owner can read.
-
-    Deliberately NOT an OSError. `web_auth` wraps its `ensure_tool_token`
-    call in `except Exception` and denies, and startup lets this propagate
-    and refuses to boot — both fail closed, which is the point. An OSError
-    would be at risk of being swallowed by code that is handling ordinary
-    file trouble.
-    """
-
-
-# --- the two operations that make a file private ---------------------------
+# The two operations that make a file private live in the platform layer:
+# `jarvis_platform.base.Secrets`, with one implementation per OS. They were
+# inlined here as three POSIX calls (`O_NOFOLLOW`, `getuid`, `fchmod`), none
+# of which exists on Windows, and the failure mode to avoid was an
+# `except AttributeError: pass` that leaves the token — which admits any
+# caller to every acting tool over loopback — at whatever permissions it was
+# born with while this docstring still promised otherwise.
 #
-# Extracted so the promise in `ensure_tool_token`'s docstring has one place
-# to be kept per platform, instead of being three POSIX-only calls inlined
-# mid-function. `os.O_NOFOLLOW`, `os.getuid` and `os.fchmod` do not exist on
-# Windows, and the failure mode to avoid is an `except AttributeError: pass`
-# that leaves the token — which admits any caller to every acting tool over
-# loopback — at whatever permissions it was born with, while the docstring
-# still promises 0600.
-#
-# The POSIX implementations below are byte-for-byte what this function has
-# always done. The Windows ones refuse, loudly, until they are written
-# against an ACL: creating the file there is easy, and creating it PRIVATE
-# is the part that needs doing.
-
-
-def _create_private_posix(path: Path):
-    """A new file only its owner can read, or None if one already exists.
-
-    O_EXCL at mode 0600 directly — never briefly world-readable at umask
-    permissions between the write and a chmod.
-    """
-    try:
-        return os.open(str(path), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
-    except FileExistsError:
-        return None
-
-
-def _adopt_private_posix(path: Path):
-    """An existing file, opened and proven to be ours, forced back to 0600.
-
-    Adopted through ONE file descriptor: opened O_NOFOLLOW, checked with
-    fstat, chmodded with fchmod, and read with that same fd. An earlier
-    version did `path.chmod(); path.read_text()`, two lookups of a name an
-    attacker could change in between — and both followed symlinks, so a link
-    planted at this path meant any file the user owns could be forced to
-    0600, and the token JARVIS then trusted was one somebody else wrote.
-
-    A path that is not a regular file this user owns raises, rather than
-    being quietly replaced: it is somebody else's file, and deleting it is
-    not ours to do.
-    """
-    import stat as _stat
-    fd = os.open(str(path), os.O_RDWR | os.O_NOFOLLOW)
-    try:
-        info = os.fstat(fd)
-        if not _stat.S_ISREG(info.st_mode):
-            raise OSError(f"{path} is not a regular file")
-        if info.st_uid != os.getuid():
-            raise OSError(f"{path} is owned by uid {info.st_uid}, not by us")
-        os.fchmod(fd, 0o600)
-    except BaseException:
-        os.close(fd)
-        raise
-    return fd
-
-
-def _create_private_windows(path: Path):
-    raise PrivateFileUnsupported(
-        f"cannot create {path} with owner-only access on this platform yet. "
-        "The token admits its bearer to every acting tool over loopback, so "
-        "it is not created rather than created readable. Needs a DACL "
-        "granting only the current user (icacls or pywin32) — see the "
-        "Windows platform work.")
-
-
-def _adopt_private_windows(path: Path):
-    raise PrivateFileUnsupported(
-        f"cannot prove {path} is private to this user on this platform yet. "
-        "O_NOFOLLOW, getuid and fchmod have no Windows equivalent here; the "
-        "checks need rebuilding against a DACL, and against junctions rather "
-        "than symlinks — see the Windows platform work.")
-
-
-if os.name == "nt":                                  # pragma: no cover - POSIX CI
-    _create_private = _create_private_windows
-    _adopt_private = _adopt_private_windows
-else:
-    _create_private = _create_private_posix
-    _adopt_private = _adopt_private_posix
+# Re-exported so `except data_paths.PrivateFileUnsupported` keeps working
+# for anything that was written against it.
+PrivateFileUnsupported = jarvis_platform.base.PrivateFileUnsupported
 
 
 def ensure_tool_token() -> str:
@@ -457,9 +380,8 @@ def ensure_tool_token() -> str:
 
     The token is what admits a caller to JARVIS's acting tools and to every
     state-changing HTTP route (see web_auth), so it is created private and
-    adopted only after being proven private — see `_create_private` and
-    `_adopt_private` above, which is where that promise is kept and where it
-    differs by platform.
+    adopted only after being proven private. That promise is kept by
+    `jarvis_platform.current().secrets`, which is where it differs by OS.
 
     A pre-existing file is still adopted, because it has to be across
     restarts. A path that is not a regular file this user owns raises.
@@ -469,7 +391,8 @@ def ensure_tool_token() -> str:
     path.parent.mkdir(parents=True, exist_ok=True)
 
     token = secrets.token_urlsafe(32)
-    fd = _create_private(path)
+    secrets = jarvis_platform.current().secrets
+    fd = secrets.create_private(path)
     if fd is not None:
         try:
             os.write(fd, token.encode("utf-8"))
@@ -477,7 +400,7 @@ def ensure_tool_token() -> str:
             os.close(fd)
         return token
 
-    fd = _adopt_private(path)
+    fd = secrets.adopt_private(path)
     try:
         existing = os.read(fd, 4096).decode("utf-8", "ignore").strip()
         if existing:
