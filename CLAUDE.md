@@ -204,6 +204,11 @@ the commit why the alternative was worse.
 - `data_paths.py` — Single source of truth for where data is written
 
 ## Other directories
+- `docs/plans/` — the cross-platform port: the phased plan, and the live
+  handoff used while the work spans a Mac and a Windows box. Read
+  `windows-handoff.md` before touching `jarvis_platform/windows/` — that
+  package is written from documentation rather than measured, and the
+  handoff is the checklist for correcting it
 - `jarvis_home/` — The brain's own home, templated into the data dir by
   `data_paths.py`: `CLAUDE.md` is JARVIS's system prompt (how he speaks; it
   `@`-imports the memory index), and `connections.json` is the *only* file
