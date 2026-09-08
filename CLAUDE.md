@@ -80,10 +80,14 @@ Nothing spawns Claude Code outside `RunExecutor`. Two invariants govern it:
    WebSocket is a cache-invalidation hint, never a source of truth; clients
    reconcile against `/api/runs`.
 
-Two more rules for this area: no new npm or Python dependencies, and the
-dashboard never uses `innerHTML` / `insertAdjacentHTML` — it renders
-arbitrary LLM and file content, so everything goes through
-`createElement` / `textContent`.
+One more rule for this area: the dashboard never uses `innerHTML` /
+`insertAdjacentHTML` — it renders arbitrary LLM and file content, so
+everything goes through `createElement` / `textContent`.
+
+A dependency is allowed when it earns its place (`piper-tts` is the first),
+but it is still a cost: prefer the standard library and a subprocess to a
+package, keep it out of the hot voice path unless it is the point, and say in
+the commit why the alternative was worse.
 
 ## Key Files
 - `server.py` — Main server, WebSocket handler, HTTP API, action system
@@ -288,6 +292,15 @@ cd frontend && npx tsc --noEmit && npm run build
 
 Python 3.11+ is required — the code uses `X | None` at runtime, so the
 `python3` macOS ships with dies at import.
+
+## Pull requests
+Every PR goes to **`kenhayward/jarvis`** (the `origin` remote), never to
+`ethanplusai/jarvis` (`upstream`). `gh pr create` defaults a fork's base to
+the parent repository, so the base is always passed explicitly:
+
+```bash
+gh pr create --repo kenhayward/jarvis --base main
+```
 
 ## Conventions
 - JARVIS personality: British butler, dry wit, economy of language
