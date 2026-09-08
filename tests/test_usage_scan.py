@@ -389,7 +389,10 @@ def test_a_replaced_file_at_the_same_path_and_size_is_read_from_the_start(tmp_pa
 
     body = p.read_text(encoding="utf-8").replace('"output_tokens": 111', '"output_tokens": 222')
     p.unlink()
-    p.write_text(body)
+    # LF, like the CLI writes and like the fixtures beside this: the next
+    # line compares the string length against the size ON DISK, and text
+    # mode would add a byte per line on Windows.
+    p.write_text(body, encoding="utf-8", newline=chr(10))
     assert len(body) == p.stat().st_size
 
     assert one(us.report(roots=[a], now=NOW, cache=cache), "s1").tokens.output == 222

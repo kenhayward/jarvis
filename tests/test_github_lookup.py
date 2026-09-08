@@ -24,9 +24,11 @@ is safe run a fake `gh` written into tmp_path. Every fixture below is a real
 """
 
 import asyncio
+import functools
 import importlib
 import json
 import os
+import pathlib
 import stat
 import sys
 from pathlib import Path
@@ -279,6 +281,48 @@ async def test_no_gh_at_all_is_said_plainly(gh, monkeypatch):
 
 # --- the subprocess itself -------------------------------------------------
 
+@functools.lru_cache(maxsize=1)
+def _can_exec_a_shebang_script() -> bool:
+    """Will this OS execute a plain interpreter script directly?
+
+    POSIX reads the `#!` line. Windows does not: spawning an extensionless
+    script fails with `OSError [WinError 193] %1 is not a valid Win32
+    application` — measured.
+
+    It matters because the fake `gh` below has to be a real program that is
+    NOT a shell. The property those two tests exist to prove is that
+    `gh_lookup` hands the OS an argv LIST with no shell anywhere in it, so a
+    semicolon or a backtick has nothing to end. The only script shapes
+    Windows will spawn are `.cmd` and `.bat` — both measured to work — and
+    both ARE shells. Building the fake out of one would put a command
+    interpreter back into the path and make the test prove the opposite of
+    what it claims, which is worse than not running it.
+
+    So they skip rather than being rewritten around a weaker fake. What is
+    lost is only the "and the real OS received it" half: the argv SHAPE is
+    still asserted on every platform by the fake-seam tests above, and the
+    construction in `gh_lookup` is one argument list either way.
+    """
+    import subprocess
+    import tempfile
+    script = pathlib.Path(tempfile.mkdtemp()) / "probe"
+    script.write_text(f"#!{sys.executable}\nprint('ok')\n", encoding="utf-8")
+    script.chmod(script.stat().st_mode | stat.S_IEXEC)
+    try:
+        subprocess.run([str(script)], capture_output=True, timeout=30)
+    except OSError:
+        return False
+    except subprocess.SubprocessError:            # pragma: no cover
+        return False
+    return True
+
+
+_needs_shebang_exec = pytest.mark.skipif(
+    not _can_exec_a_shebang_script(),
+    reason="no way to build an exec-able fake `gh` that is not itself a shell; "
+           "the argv shape is still covered by the fake-seam tests")
+
+
 def _fake_gh(tmp_path, body="print('[]')"):
     """A `gh` that records its argv. Executable, and Python — no shell."""
     script = tmp_path / "gh"
@@ -291,6 +335,7 @@ def _fake_gh(tmp_path, body="print('[]')"):
     return script
 
 
+@_needs_shebang_exec
 @pytest.mark.asyncio
 async def test_the_repository_name_is_an_argument_and_never_a_shell_string(
         tmp_path, monkeypatch):
@@ -317,6 +362,7 @@ async def test_the_repository_name_is_an_argument_and_never_a_shell_string(
     assert not any(";" in arg and "&&" in arg and arg != nasty for arg in flat)
 
 
+@_needs_shebang_exec
 @pytest.mark.asyncio
 async def test_a_search_query_can_never_be_read_as_a_flag(tmp_path, monkeypatch):
     """`--` before the positional.

@@ -32,21 +32,40 @@ def test_the_same_token_is_adopted_across_calls():
     assert data_paths.ensure_tool_token() == first
 
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX adopt-and-tighten; Windows "
+                                            "refuses a foreign file instead")
 def test_a_pre_existing_loose_file_has_its_mode_forced_back():
+    """POSIX can see the file is this user's and simply tighten it.
+
+    Windows cannot: with no cheap `getuid` it uses the DACL as the ownership
+    test, an inherited one proves nothing, and it therefore REFUSES rather
+    than re-permissioning. That half is asserted by
+    `test_a_pre_existing_token_windows_cannot_prove_is_ours_is_refused` in
+    tests/test_internal_tool.py.
+    """
     path = data_paths.tool_token_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("already-here")
     os.chmod(path, 0o644)
 
     assert data_paths.ensure_tool_token() == "already-here"
-    if os.name != "nt":
-        assert _mode(path) == 0o600, oct(_mode(path))
+    assert _mode(path) == 0o600, oct(_mode(path))
 
 
 def test_an_empty_file_is_filled_rather_than_trusted():
+    """An empty token is not a token, whoever left it there.
+
+    The planted file is made PRIVATE first, so it is one JARVIS could have
+    written itself. Without that step Windows refuses it as somebody else's
+    before the emptiness is ever considered — which is correct behaviour but
+    a different property, and it would leave this one untested there. The
+    question here is what happens to OUR own empty file.
+    """
+    import jarvis_platform
     path = data_paths.tool_token_path()
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text("   \n")
+    path.write_text("   \n", encoding="utf-8")
+    jarvis_platform.current().secrets.restrict(path)
 
     token = data_paths.ensure_tool_token()
     assert token.strip() == token and len(token) > 20

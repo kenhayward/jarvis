@@ -174,3 +174,28 @@ def needs_symlinks(tmp_path):
         pytest.skip(f"cannot create a symlink to test with ({e.strerror}); "
                     "symlink containment is unproven on this machine")
     probe.unlink()
+
+
+def can_name_a_file(name: str) -> bool:
+    """Will this filesystem accept a file or directory with that name?
+
+    Several tests attack through the NAME itself: a newline in it forges a
+    line of JARVIS's own speech in a header line, a quote closes the
+    untrusted wrapper. Windows refuses both outright -- measured, the Win32
+    layer rejects control characters and a quote in a path component -- so
+    there the file cannot be created and the test has nothing to attack
+    with.
+
+    Callers skip on a False, and should say what that skip means: a NARROWER
+    threat surface, not an untested one. The wall in `server` is unchanged
+    and every other input still exercises it; what is absent is only the
+    ability to build that particular shape.
+    """
+    import pathlib
+    import tempfile
+    probe = pathlib.Path(tempfile.mkdtemp()) / name
+    try:
+        probe.write_text("x", encoding="utf-8")
+    except OSError:
+        return False
+    return True

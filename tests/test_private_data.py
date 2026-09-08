@@ -191,8 +191,19 @@ def test_the_generated_mcp_config_is_not_world_readable(wired):
     be looser."""
     server, _project, dp = wired
     path = server._write_mcp_config(dp.brain_home())
-    mode = stat.S_IMODE(os.stat(path).st_mode)
-    assert mode == 0o600, oct(mode)
+
+    # Asked of the platform, because 0600 is the POSIX SPELLING of owner-only
+    # and not the promise. `chmod` on Windows moves the read-only attribute
+    # and restricts nobody, so pinning the mode there asserted nothing about
+    # who can read the file — and this one holds the user's Notion and GitHub
+    # tokens. `adopt_private` opens a file only when it can prove it is
+    # private to this user: the mode on POSIX, a single-ACE DACL on Windows.
+    import jarvis_platform
+    os.close(jarvis_platform.current().secrets.adopt_private(path))
+
+    if os.name == "posix":
+        mode = stat.S_IMODE(os.stat(path).st_mode)
+        assert mode == 0o600, oct(mode)
 
 
 def test_a_pre_existing_mcp_config_has_its_mode_forced_back(wired):
@@ -201,10 +212,21 @@ def test_a_pre_existing_mcp_config_has_its_mode_forced_back(wired):
     applies to the token."""
     server, _project, dp = wired
     path = dp.brain_home() / "mcp.json"
-    path.write_text("{}")
+    path.write_text("{}", encoding="utf-8")
     os.chmod(path, 0o644)
+
     server._write_mcp_config(dp.brain_home())
-    assert stat.S_IMODE(os.stat(path).st_mode) == 0o600
+
+    # Same reasoning as its neighbour above: the promise is "only this user
+    # can read it", and the two platforms keep it in different currencies.
+    # Note this file is REWRITTEN on every start, unlike the token, so the
+    # loose pre-existing one is tightened rather than refused — mcp.json is
+    # JARVIS's to regenerate and says so in its own first line.
+    import jarvis_platform
+    os.close(jarvis_platform.current().secrets.adopt_private(path))
+
+    if os.name == "posix":
+        assert stat.S_IMODE(os.stat(path).st_mode) == 0o600
 
 
 # --- opening things in a browser -----------------------------------------
