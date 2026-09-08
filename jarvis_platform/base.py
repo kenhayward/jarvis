@@ -118,6 +118,51 @@ class _NoNotifications:
 NO_NOTIFICATIONS = _NoNotifications()
 
 
+class Launcher(Protocol):
+    """Putting something on the user's screen: a terminal, a page, a file.
+
+    Each returns `{"success": bool, "confirmation": str}` — `confirmation`
+    is a sentence fit to be spoken, because it usually is. `editor` also
+    returns `"editor"`, the name of what actually opened.
+
+    `terminal` takes `cwd` and `command` separately rather than a composed
+    shell line, so the implementation can quote for its own shell. That is
+    the whole reason this is an interface and not three free functions.
+    """
+
+    async def terminal(self, *, cwd: str = "", command: str = "") -> dict: ...
+
+    async def browser(self, url: str, which: str = "chrome") -> dict: ...
+
+    async def editor(self, path: str) -> dict: ...
+
+
+class _NoLauncher:
+    """A platform that cannot open windows yet.
+
+    Unreachable in practice — every tool that calls a launcher is withdrawn
+    by CAP_TERMINAL / CAP_BROWSER / CAP_EDITOR before it can be invoked, so
+    this is the backstop behind that gate rather than the gate itself. It
+    refuses in the shape callers already handle: `success` False and a
+    sentence, never an exception.
+    """
+
+    _REFUSAL = {"success": False,
+                "confirmation": "I can't open that on this machine, sir."}
+
+    async def terminal(self, *, cwd: str = "", command: str = "") -> dict:
+        return dict(self._REFUSAL)
+
+    async def browser(self, url: str, which: str = "chrome") -> dict:
+        return dict(self._REFUSAL)
+
+    async def editor(self, path: str) -> dict:
+        return dict(self._REFUSAL, editor="an editor")
+
+
+NO_LAUNCHER = _NoLauncher()
+
+
 @dataclass(frozen=True)
 class Host:
     """One platform, what it can do, and how it does it.
@@ -130,6 +175,7 @@ class Host:
     name: str
     capabilities: frozenset[str]
     notifications: Notifications = field(default=NO_NOTIFICATIONS)
+    launcher: Launcher = field(default=NO_LAUNCHER)
 
     def can(self, capability: str) -> bool:
         return capability in self.capabilities

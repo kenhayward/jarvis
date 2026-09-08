@@ -59,7 +59,7 @@ def test_focus_terminal_window_gone(env):
 
 
 def test_monitor_build_gone():
-    import actions
+    from jarvis_platform.macos import launcher as actions
     importlib.reload(actions)
     assert not hasattr(actions, "monitor_build")
     assert not hasattr(actions, "open_claude_in_project")
@@ -80,7 +80,7 @@ def test_is_casual_question_survives():
 
 
 def test_no_sentinel_string_remains():
-    text = (ROOT / "actions.py").read_text()
+    text = (ROOT / "jarvis_platform" / "macos" / "launcher.py").read_text()
     assert "JARVIS TASK COMPLETE" not in text
     assert "JARVIS TASK COMPLETE" not in (ROOT / "server.py").read_text()
 
@@ -135,7 +135,7 @@ def test_execute_research_is_gone(env):
 def test_classify_intent_and_execute_action_are_gone(env):
     """The keyword/LLM intent-classifier pipeline was superseded by the
     [ACTION:X] tags `extract_action` parses out of the response."""
-    import actions
+    from jarvis_platform.macos import launcher as actions
     importlib.reload(actions)
     assert not hasattr(env, "classify_intent")
     assert not hasattr(actions, "execute_action")
@@ -145,7 +145,7 @@ def test_classify_intent_and_execute_action_are_gone(env):
 def test_executor_injection_into_actions_is_gone(env):
     """`actions.execute_action`'s build branch was the only spawner there, so
     no run will ever have origin == "terminal" any more. That is expected."""
-    import actions
+    from jarvis_platform.macos import launcher as actions
     importlib.reload(actions)
     assert not hasattr(actions, "set_executor")
     assert not hasattr(actions, "_executor")

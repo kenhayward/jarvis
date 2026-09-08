@@ -157,7 +157,11 @@ the commit why the alternative was worse.
   in `_write_mcp_config`, and `preflight`'s `_CHECK_CAPABILITIES`. **Not**
   named `platform/` — that would shadow the stdlib module for the whole
   process, since `server.py` runs from the repository root
-- `actions.py` — System actions (Terminal, Chrome) via AppleScript
+- `jarvis_platform/macos/launcher.py` — Terminal, browser and editor via
+  AppleScript. Reached as `jarvis_platform.current().launcher`. It composes
+  its own `cd` and does its own quoting: `shlex.quote` is POSIX, so leaving
+  it at the call site meant three copies in `server.py` that would each have
+  to be found and corrected for cmd.exe. Was `actions.py`
 - `browser.py` — Playwright. Only the headless half is live (`read_page`,
   `capture_page`, behind `read_page` / `look_at_page`); the headful
   `JarvisBrowser` search/research class is reachable from nothing but

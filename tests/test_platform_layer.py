@@ -220,3 +220,47 @@ async def test_a_host_without_notifications_declines_rather_than_raising():
     host = jp.Host(name="plan9", capabilities=frozenset())
     assert host.notifications.available() is False
     assert await host.notifications.notify("t", "m", subtitle="s") is False
+
+
+def test_the_macos_host_carries_the_real_launcher():
+    from jarvis_platform.macos import MACOS, launcher
+    assert MACOS.launcher is launcher
+
+
+@pytest.mark.asyncio
+async def test_the_launcher_quotes_its_own_cwd_and_leaves_the_command_alone():
+    """Quoting belongs to the shell being quoted for, which is why `terminal`
+    takes cwd and command apart rather than a composed line. The command is
+    deliberately NOT quoted — a start command is meant to be a command, and
+    its callers have already been through `builds.command_problem`."""
+    import shlex
+    from jarvis_platform.macos import launcher
+
+    seen = {}
+
+    async def _fake_exec(*argv, **kwargs):
+        seen["script"] = argv[2]
+        raise OSError("not actually running osascript")
+
+    import asyncio as _asyncio
+    real = _asyncio.create_subprocess_exec
+    _asyncio.create_subprocess_exec = _fake_exec
+    try:
+        with pytest.raises(OSError):
+            await launcher.terminal(cwd="/tmp/a b", command="npm run dev")
+    finally:
+        _asyncio.create_subprocess_exec = real
+
+    assert f"cd {shlex.quote('/tmp/a b')} && npm run dev" in seen["script"]
+
+
+@pytest.mark.asyncio
+async def test_a_host_without_a_launcher_refuses_in_the_shape_callers_expect():
+    """Unreachable behind the capability gate, but it must refuse the way
+    every caller already handles rather than raising."""
+    host = jp.Host(name="plan9", capabilities=frozenset())
+    for result in (await host.launcher.terminal(cwd="/tmp"),
+                   await host.launcher.browser("https://example.com"),
+                   await host.launcher.editor("/tmp/x")):
+        assert result["success"] is False
+        assert result["confirmation"]

@@ -797,8 +797,9 @@ def test_a_file_the_repository_named_is_not_spoken_raw(server, monkeypatch, tmp_
 
     async def opened(*a, **k):
         return {"success": True, "editor": "Cursor"}
-    monkeypatch.setattr(server.actions, "open_in_editor", opened)
-    monkeypatch.setattr(server.actions, "open_browser", opened)
+    from jarvis_platform.macos import launcher
+    monkeypatch.setattr(launcher, "editor", opened)
+    monkeypatch.setattr(launcher, "browser", opened)
 
     out = _run(server.tool_open_in_editor({"project": "chitauri", "path": evil}))
     assert out.startswith("Opened that file in Cursor"), out

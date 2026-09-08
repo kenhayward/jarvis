@@ -11,13 +11,19 @@ from __future__ import annotations
 from .base import ALL_CAPABILITIES, Host
 
 
-def fake_host(*, name: str = "fake", capabilities=None,
-              without=()) -> Host:
+def fake_host(*, name: str = "fake", capabilities=None, without=(),
+              **providers) -> Host:
     """A host declaring `capabilities`, or everything minus `without`.
 
-    Two spellings because tests want both: "a machine that can only do X"
-    and "a Mac that has lost X".
+    Two spellings for the capability set because tests want both: "a
+    machine that can only do X" and "a Mac that has lost X".
+
+    `providers` are the sub-interfaces — `notifications=`, `launcher=` —
+    and anything not given keeps the null object from `base`. A test that
+    installs a recording launcher here is mocking at the protocol
+    boundary, which means it will exercise the Windows implementation
+    unchanged when there is one.
     """
     if capabilities is None:
         capabilities = ALL_CAPABILITIES - frozenset(without)
-    return Host(name=name, capabilities=frozenset(capabilities))
+    return Host(name=name, capabilities=frozenset(capabilities), **providers)

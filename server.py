@@ -17,7 +17,6 @@ import os
 import difflib
 import re
 import secrets
-import shlex
 import sys
 import sqlite3
 import threading
@@ -72,7 +71,6 @@ from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconn
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-import actions
 import builds
 from work_mode import is_casual_question
 import preflight
@@ -2370,7 +2368,7 @@ READ_BACK_TOOLS = {"steer_session", "answer_dialog", "run_command"}
 # path to an unattended `claude --dangerously-skip-permissions` never touched
 # the web at all: "what's in that repo?" → `read_file` returns an attacker's
 # README → same turn, origin "user", turn clean → `spawn_run`. Add the
-# AppleScript hole `actions.open_browser` had and the same turn was remote
+# AppleScript hole the launcher's `browser` had and the same turn was remote
 # code execution with nothing spoken.
 #
 # So the rule is now the honest one: EVERY reader taints, and the value is
@@ -3543,7 +3541,7 @@ async def _perform_command(item: _StagedCommand) -> None:
       * a read-back that never completes runs NOTHING;
       * nothing is ever run unheard.
 
-    The window is VISIBLE (`actions.open_terminal`), never a hidden
+    The window is VISIBLE (the launcher's `terminal`), never a hidden
     subprocess: whatever this starts, the user can see it and kill it.
     """
     recorded = False
@@ -3585,11 +3583,12 @@ async def _perform_command(item: _StagedCommand) -> None:
             return
 
         # `cd` into the project first: a start command means nothing in the
-        # wrong directory, and the path is quoted while the command itself has
-        # already been through `builds.command_problem`, which permits no
-        # shell metacharacter at all.
-        result = await actions.open_terminal(
-            f"cd {shlex.quote(item.path)} && {item.command}")
+        # wrong directory. The quoting is the launcher's — see its docstring
+        # for why it cannot live here — and `item.command` has already been
+        # through `builds.command_problem`, which permits no shell
+        # metacharacter at all.
+        result = await jarvis_platform.current().launcher.terminal(
+            cwd=item.path, command=item.command)
         if result.get("success"):
             record("ran")
             await speech.say(
@@ -4623,7 +4622,7 @@ async def tool_create_project(args: dict) -> str:
 # Opening the result: a browser, or a terminal
 # ---------------------------------------------------------------------------
 #
-# `actions.py` has been able to do this since the first version; it was
+# The launcher has been able to do this since the first version; it was
 # simply never wired to the tool-based brain, so JARVIS could build a site
 # and then not show it to anybody.
 #
@@ -4652,7 +4651,7 @@ _DIRECTORY_INDEXES = ("index.html", "index.htm")
 # import so that changing it does not need a restart. No second mechanism,
 # no settings file of its own.
 #
-# `actions.open_browser` speaks AppleScript to exactly two applications, so
+# The macOS launcher speaks AppleScript to exactly two applications, so
 # exactly two names are accepted. A third name is refused out loud rather
 # than quietly falling through to Chrome: JARVIS saying "opened that in
 # Safari, sir" while Chrome comes up is the same class of lie as reporting a
@@ -4824,7 +4823,8 @@ async def tool_open_in_browser(args: dict) -> str:
     if lowered.startswith(_WEB_SCHEMES):
         if which != "chrome" and _is_jarvis_voice_ui(target):
             return MIC_NEEDS_CHROME
-        result = await actions.open_browser(target, which)
+        result = await jarvis_platform.current().launcher.browser(
+            target, which)
         return result.get("confirmation") or "Opened that, sir."
     if "://" in target or lowered.startswith(("file:", "data:", "javascript:")):
         return ("I only open web addresses and files inside your projects, "
@@ -4903,7 +4903,8 @@ async def tool_open_in_browser(args: dict) -> str:
     if _too_private_to_open(resolved):
         return REPO_SENSITIVE_REFUSAL
 
-    result = await actions.open_browser(resolved.as_uri(), which)
+    result = await jarvis_platform.current().launcher.browser(
+        resolved.as_uri(), which)
     if not result.get("success"):
         return result.get("confirmation") or "The browser wouldn't open, sir."
     return f"Opened {_plain_name(resolved.name, 'that file')} from {project_name}, sir."
@@ -4917,7 +4918,7 @@ async def tool_open_in_terminal(args: dict) -> str:
     name, path, problem = _resolve_project_or_explain(reference)
     if problem:
         return problem
-    result = await actions.open_terminal(f"cd {shlex.quote(path)}")
+    result = await jarvis_platform.current().launcher.terminal(cwd=path)
     if not result.get("success"):
         return result.get("confirmation") or "Terminal wouldn't open, sir."
     return f"Terminal's open in {name}, sir."
@@ -5626,7 +5627,7 @@ async def tool_open_in_editor(args: dict) -> str:
             return REPO_SENSITIVE_REFUSAL
         what = name
 
-    result = await actions.open_in_editor(str(resolved))
+    result = await jarvis_platform.current().launcher.editor(str(resolved))
     if not result.get("success"):
         return result.get("confirmation") or "The editor wouldn't open, sir."
     return f"Opened {what} in {result.get('editor', 'your editor')}, sir."
@@ -6596,11 +6597,13 @@ async def api_project_open(body: ProjectOpenRequest):
                             content={"error": "Unknown project or path"})
 
     if body.target == "editor":
-        result = await actions.open_in_editor(body.path)
+        result = await jarvis_platform.current().launcher.editor(body.path)
     elif body.target == "terminal":
-        result = await actions.open_terminal(f"cd {shlex.quote(body.path)}")
+        result = await jarvis_platform.current().launcher.terminal(
+            cwd=body.path)
     elif body.target == "browser":
-        result = await actions.open_browser(Path(body.path).as_uri())
+        result = await jarvis_platform.current().launcher.browser(
+            Path(body.path).as_uri())
     else:
         return JSONResponse(status_code=400, content={"error": "Unknown target"})
     return {"success": bool(result.get("success"))}

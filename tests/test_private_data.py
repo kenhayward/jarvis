@@ -30,6 +30,8 @@ import stat
 from pathlib import Path
 
 import pytest
+import jarvis_platform as jp
+from jarvis_platform.fake import fake_host
 
 SECRET = "sk-live-notion-token-do-not-read-me"
 
@@ -228,12 +230,12 @@ async def test_open_in_browser_refuses_a_private_file(monkeypatch, tmp_path):
 
     opened: list[str] = []
 
-    class _Actions:
-        async def open_browser(self, url, browser="chrome"):
+    class _Launcher:
+        async def browser(self, url, which="chrome"):
             opened.append(url)
             return {"success": True, "confirmation": "Pulled that up, sir."}
 
-    monkeypatch.setattr(server_module, "actions", _Actions())
+    monkeypatch.setattr(jp, "_HOST", fake_host(launcher=_Launcher()))
     monkeypatch.setattr(server_module, "cached_projects",
                         [{"name": "home", "path": str(home)}])
 
@@ -254,12 +256,12 @@ async def test_open_in_browser_refuses_jarvis_own_data(wired, monkeypatch):
     server, project, _dp = wired
     opened: list[str] = []
 
-    class _Actions:
-        async def open_browser(self, url, browser="chrome"):
+    class _Launcher:
+        async def browser(self, url, which="chrome"):
             opened.append(url)
             return {"success": True, "confirmation": "Pulled that up, sir."}
 
-    monkeypatch.setattr(server, "actions", _Actions())
+    monkeypatch.setattr(jp, "_HOST", fake_host(launcher=_Launcher()))
     said = await server.tool_open_in_browser(
         {"target": "data/jarvis/mcp.json", "project": "jarvis-repo"})
     assert opened == [], f"it opened {opened}"
@@ -446,12 +448,12 @@ async def test_open_in_editor_refuses_the_brain_home_itself(
     server, _home = brain_home_as_project
     opened: list[str] = []
 
-    class _Actions:
-        async def open_in_editor(self, path):
+    class _Launcher:
+        async def editor(self, path):
             opened.append(path)
             return {"success": True, "editor": "Cursor"}
 
-    monkeypatch.setattr(server, "actions", _Actions())
+    monkeypatch.setattr(jp, "_HOST", fake_host(launcher=_Launcher()))
     said = await server.tool_open_in_editor({"project": "jarvis-brain"})
     assert opened == [], f"it opened {opened}"
     assert said == server.REPO_SENSITIVE_REFUSAL, said
@@ -463,12 +465,12 @@ async def test_open_in_editor_still_opens_an_ordinary_project(wired,
     server, _project, _dp = wired
     opened: list[str] = []
 
-    class _Actions:
-        async def open_in_editor(self, path):
+    class _Launcher:
+        async def editor(self, path):
             opened.append(path)
             return {"success": True, "editor": "Cursor"}
 
-    monkeypatch.setattr(server, "actions", _Actions())
+    monkeypatch.setattr(jp, "_HOST", fake_host(launcher=_Launcher()))
     await server.tool_open_in_editor({"project": "jarvis-repo"})
     assert len(opened) == 1, opened
 
