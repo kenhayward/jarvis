@@ -338,6 +338,17 @@ def ensure_memory_layout() -> Path:
     return home
 
 
+def voices_dir() -> Path:
+    """Where local TTS voice models live (piper's .onnx + .onnx.json pairs).
+
+    Under the data dir rather than the repo: a 63 MB model is data, not
+    source, and an isolated JARVIS_DATA_DIR gets its own — the same rule the
+    database and the memory folder follow. Not created here; the download
+    creates it, and its absence is a legible "no voices installed yet".
+    """
+    return data_dir() / "voices"
+
+
 def usage_path() -> Path:
     """The last rate-limit observation from the CLI (see usage_store.py)."""
     return data_dir() / "usage.json"

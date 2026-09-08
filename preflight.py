@@ -38,6 +38,7 @@ from pathlib import Path
 from typing import Optional
 
 import claude_env
+import data_paths
 import screen
 import tts
 
@@ -464,7 +465,8 @@ async def _check_voice(timeout: float = DEFAULT_CHECK_TIMEOUT) -> Check:
     Backend-aware, because "no FISH_API_KEY" stopped meaning "no voice" when
     `say` became the default — reporting a missing key as a failure on a
     machine that speaks perfectly well is how a preflight teaches people to
-    ignore it.
+    ignore it. Each backend fails for its own reason, and each remedy is the
+    command that fixes THAT one: a key, a pip install, or a 63 MB download.
 
     The voice NAME is checked, not just the binary, because `say -v Bogus`
     exits 0 and quietly synthesises with the system default (measured): a
@@ -472,6 +474,29 @@ async def _check_voice(timeout: float = DEFAULT_CHECK_TIMEOUT) -> Check:
     That is a warn — he still speaks — where a missing `say` is a fail.
     """
     backend = tts.resolve_backend()
+
+    if backend == tts.BACKEND_PIPER:
+        wanted = tts.resolve_piper_voice()
+        if tts.piper_bin() is None:
+            return Check(
+                name="voice",
+                status=STATUS_FAIL,
+                message="JARVIS_TTS_BACKEND=piper but `piper` was not found.",
+                remedy=("Install it into the interpreter JARVIS runs on: "
+                        "`.venv/bin/pip install -r requirements-piper.txt`, or "
+                        "drop JARVIS_TTS_BACKEND to use the local macOS voice."),
+            )
+        if tts.piper_model_path() is None:
+            voices = data_paths.voices_dir()
+            return Check(
+                name="voice",
+                status=STATUS_FAIL,
+                message=f"piper voice {wanted!r} is not installed in {voices}.",
+                remedy=(f"Download it: `.venv/bin/python -m piper.download_voices "
+                        f"--download-dir {voices} {wanted}` (about 63 MB)."),
+            )
+        return Check(name="voice", status=STATUS_OK,
+                     message=f"Local piper backend, voice {wanted!r}.")
 
     if backend == tts.BACKEND_FISH:
         if os.environ.get("FISH_API_KEY"):
@@ -761,6 +786,10 @@ def _phrase_for(check: Check) -> str:
     if name == "voice":
         if "FISH_API_KEY" in msg:
             return "I have no Fish Audio key"
+        if "`piper` was not found" in msg:
+            return "piper isn't installed"
+        if "is not installed in" in msg:
+            return "my piper voice isn't downloaded"
         if "not on PATH" in msg:
             return "I have no voice on this machine"
         if "not installed" in msg:

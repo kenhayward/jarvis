@@ -83,11 +83,31 @@ audio, so he stays ahead of his own mouth. System Settings -> Accessibility ->
 Spoken Content -> Manage Voices has a free "Daniel (Premium)" download that
 the same setting picks up.
 
-If you would rather have a cloned or hosted voice, [Fish
+If `say` sounds too much like a satnav, **piper** is the middle option: a
+neural voice that is still local and still offline, for one optional
+dependency and a ~63 MB model. Measured with `en_GB-alan-medium` on the same
+Mac: 0.67s per sentence warm, against `say`'s 0.45s.
+
+```bash
+pip install -r requirements-piper.txt
+python -m piper.download_voices --download-dir data/voices en_GB-alan-medium
+```
+
+Then pick it in Settings → Voice, or set `JARVIS_TTS_BACKEND=piper`. The
+panel only offers models you have actually downloaded, because a model JARVIS
+does not have is not a mistake he can report mid-sentence — he would simply
+stop speaking.
+
+**And if a backend does fail, he does not go quiet.** Whatever is configured,
+`say` takes over, and he tells you once: *"Piper has gone quiet, sir — I'm
+using the system voice until it's sorted."* Silence is the one failure that
+reads as "this thing is broken" rather than "this thing needs a file.
+
+And if you would rather have a cloned or hosted voice, [Fish
 Audio](https://fish.audio/) is still built in — set `FISH_API_KEY` and
 `JARVIS_TTS_BACKEND=fish`. That key is read *only* when you ask for it, so one
-left in `.env` from an earlier setup cannot quietly start billing. Either way
-it is one small, well-isolated file to replace — see *Make it yours* below.
+left in `.env` from an earlier setup cannot quietly start billing. All three
+live in one small, well-isolated file — see *Make it yours* below.
 
 ## What he does
 
@@ -155,8 +175,9 @@ stuck is the CLI's own words, not a guess. Fictional sample data.*
   @anthropic-ai/claude-code` (2.1.224 or newer), then run `claude` once and
   log in. This is what JARVIS runs on.
 - **Python 3.11+** and **Node.js 18+**.
-- **Nothing else.** The voice is local (macOS `say`); a Fish Audio key is
-  optional, and only read with `JARVIS_TTS_BACKEND=fish`.
+- **Nothing else.** The voice is local (macOS `say`). `piper` is an optional
+  install for a better local voice; a Fish Audio key is optional too, and only
+  read with `JARVIS_TTS_BACKEND=fish`.
 
 ## Setup
 
@@ -176,11 +197,14 @@ cd frontend && npm install && cd ..
 required — a copied `.env.example` already works:
 
 ```env
+# JARVIS_TTS_BACKEND=say    # optional: say (default), piper, or fish
 # JARVIS_TTS_VOICE=Daniel   # optional: any voice `say -v '?'` lists
 # JARVIS_BRAIN_MODEL=sonnet # optional: the brain's model
 # USER_NAME=Tony            # optional: what he calls you
-# JARVIS_TTS_BACKEND=fish   # optional: the hosted voice, with FISH_API_KEY
 ```
+
+Every one of those is also in **Settings → Voice** in the browser, where a
+change takes effect on his next sentence rather than his next restart.
 
 **Generate the certificates.** These are not optional:
 
@@ -325,7 +349,7 @@ invariants hold throughout it:
 | Frontend | Vite + TypeScript + Three.js (voice UI), vanilla TS (dashboard) |
 | Communication | WebSocket — JSON messages, base64 audio (WAV locally, MP3 from Fish) |
 | Brain | One long-lived `claude -p` process, Sonnet by default, on your subscription |
-| Voice | macOS `say` by default, Fish Audio on request; one call per sentence |
+| Voice | macOS `say` by default, piper or Fish Audio on request; one call per sentence |
 | System | AppleScript — Terminal, Chrome, notifications, screenshots |
 | Storage | SQLite for runs and usage; plain Markdown for memory |
 
@@ -338,7 +362,7 @@ invariants hold throughout it:
 | `claude_env.py` | The environment every spawned child gets, including the `ANTHROPIC_*` scrub |
 | `jarvis_mcp.py` | Stdio MCP server exposing JARVIS's tools to the brain |
 | `speech.py` | Sentence splitting, echo rejection, barge-in, and the queue of everything JARVIS says |
-| `tts.py` | Synthesis, both backends — the whole voice, in one small file |
+| `tts.py` | Synthesis, all three backends — the whole voice, in one small file |
 | `builds.py` | Spec, brief and plan: the pipeline behind a real multi-hour build |
 | `specs.py` | The review surface — reading a design back by numbered section, and approving it |
 | `run_store.py` | SQLite `runs` / `run_events`, and the six-value status enum |

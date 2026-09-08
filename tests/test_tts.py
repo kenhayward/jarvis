@@ -1,9 +1,9 @@
-"""Both TTS backends, at their own seams.
+"""All three TTS backends, at their own seams.
 
-`say` is never really spawned: the whole suite runs offline and silent, so
-the subprocess boundary (`tts._spawn_say`) is faked here exactly as
-`preflight._run_subprocess` and `dialog._osascript` are elsewhere. Fish is
-faked at its httpx transport, as before.
+Neither local synthesiser is ever really spawned: the whole suite runs
+offline and silent, so the subprocess boundary (`tts._spawn_synth`) is faked
+here exactly as `preflight._run_subprocess` and `dialog._osascript` are
+elsewhere. Fish is faked at its httpx transport, as before.
 """
 import json
 import struct
@@ -28,12 +28,14 @@ def _wav(seconds: float = 0.5, rate: int = 22050) -> bytes:
     return b"RIFF" + struct.pack("<I", 4 + len(chunks)) + b"WAVE" + chunks
 
 
-def _fake_say(spawned: list, *, audio: bytes | None = None, error: str | None = None):
-    """Stand in for `say`: record the invocation, write what it would have."""
+def _fake_spawn(spawned: list, *, audio: bytes | None = None, error: str | None = None):
+    """Stand in for a local synthesiser: record the invocation, write what it
+    would have. `say` names its output with -o, piper with -f."""
     async def fake(argv, *, text, timeout):
         spawned.append({"argv": list(argv), "text": text, "timeout": timeout})
         if error is None:
-            out = Path(argv[argv.index("-o") + 1])
+            flag = "-o" if "-o" in argv else "-f"
+            out = Path(argv[argv.index(flag) + 1])
             out.write_bytes(_wav() if audio is None else audio)
         return error
     return fake
@@ -47,6 +49,8 @@ def test_local_say_is_the_default_and_the_env_var_chooses(monkeypatch):
     assert tts.resolve_backend() == tts.BACKEND_SAY
     monkeypatch.setenv("JARVIS_TTS_BACKEND", "fish")
     assert tts.resolve_backend() == tts.BACKEND_FISH
+    monkeypatch.setenv("JARVIS_TTS_BACKEND", "piper")
+    assert tts.resolve_backend() == tts.BACKEND_PIPER
     assert tts.resolve_backend("say") == tts.BACKEND_SAY, "an argument beats the env"
 
 
@@ -78,7 +82,7 @@ async def test_say_returns_the_wav_it_wrote(monkeypatch):
     monkeypatch.delenv("JARVIS_TTS_VOICE", raising=False)
     monkeypatch.delenv("JARVIS_TTS_RATE", raising=False)
     spawned: list = []
-    monkeypatch.setattr(tts, "_spawn_say", _fake_say(spawned))
+    monkeypatch.setattr(tts, "_spawn_synth", _fake_spawn(spawned))
 
     r = await tts.synthesize_chunk("Good evening, sir.")
 
@@ -97,7 +101,7 @@ async def test_the_text_is_written_to_stdin_and_never_becomes_an_argument(monkey
     command line, one beginning with a dash would be read as flags."""
     import tts
     spawned: list = []
-    monkeypatch.setattr(tts, "_spawn_say", _fake_say(spawned))
+    monkeypatch.setattr(tts, "_spawn_synth", _fake_spawn(spawned))
 
     await tts.synthesize_chunk("-r 500 --voice Bogus, sir.", backend="say")
 
@@ -110,7 +114,7 @@ async def test_the_text_is_written_to_stdin_and_never_becomes_an_argument(monkey
 async def test_a_configured_voice_and_rate_reach_the_command(monkeypatch):
     import tts
     spawned: list = []
-    monkeypatch.setattr(tts, "_spawn_say", _fake_say(spawned))
+    monkeypatch.setattr(tts, "_spawn_synth", _fake_spawn(spawned))
 
     await tts.synthesize_chunk("x", backend="say", voice="Reed (English (UK))", rate=180)
 
@@ -124,7 +128,7 @@ async def test_the_working_file_is_gone_afterwards(monkeypatch):
     """Audio JARVIS speaks is never left on disk."""
     import tts
     spawned: list = []
-    monkeypatch.setattr(tts, "_spawn_say", _fake_say(spawned))
+    monkeypatch.setattr(tts, "_spawn_synth", _fake_spawn(spawned))
 
     r = await tts.synthesize_chunk("x", backend="say")
 
@@ -135,10 +139,10 @@ async def test_the_working_file_is_gone_afterwards(monkeypatch):
 @pytest.mark.asyncio
 async def test_a_failing_or_silent_say_is_one_lost_chunk_not_an_exception(monkeypatch):
     import tts
-    monkeypatch.setattr(tts, "_spawn_say", _fake_say([], error="exit 1: no such voice"))
+    monkeypatch.setattr(tts, "_spawn_synth", _fake_spawn([], error="exit 1: no such voice"))
     assert await tts.synthesize_chunk("x", backend="say") is None
 
-    monkeypatch.setattr(tts, "_spawn_say", _fake_say([], audio=b""))
+    monkeypatch.setattr(tts, "_spawn_synth", _fake_spawn([], audio=b""))
     assert await tts.synthesize_chunk("x", backend="say") is None
 
 
@@ -149,6 +153,183 @@ async def test_no_say_on_this_machine_returns_none(monkeypatch):
     import tts
     monkeypatch.setattr(tts.shutil, "which", lambda name: None)
     assert await tts.synthesize_chunk("x", backend="say") is None
+
+
+# --- the piper backend --------------------------------------------------------
+
+def test_piper_is_looked_for_beside_the_interpreter_first(monkeypatch, tmp_path):
+    """Measured, not theoretical: the server runs as `.venv/bin/python
+    server.py` WITHOUT the venv activated, so `which piper` returns None while
+    `.venv/bin/piper` sits right there."""
+    import tts
+    monkeypatch.delenv("JARVIS_PIPER_BIN", raising=False)
+    fake_bin = tmp_path / "piper"
+    fake_bin.write_text("#!/bin/sh\n")
+    monkeypatch.setattr(tts.sys, "executable", str(tmp_path / "python"))
+    monkeypatch.setattr(tts.shutil, "which", lambda name: None)
+    assert tts.piper_bin() == str(fake_bin)
+
+    fake_bin.unlink()
+    assert tts.piper_bin() is None, "and nothing on PATH means nothing"
+    monkeypatch.setattr(tts.shutil, "which", lambda name: "/usr/local/bin/piper")
+    assert tts.piper_bin() == "/usr/local/bin/piper", "PATH is still the fallback"
+
+
+def test_a_piper_voice_is_a_model_in_the_voices_directory(monkeypatch, tmp_path):
+    import tts
+    monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path))
+    monkeypatch.delenv("JARVIS_PIPER_VOICE", raising=False)
+    assert tts.resolve_piper_voice() == tts.DEFAULT_PIPER_VOICE
+    assert tts.piper_model_path() is None, "nothing downloaded yet"
+
+    voices = tmp_path / "voices"
+    voices.mkdir()
+    model = voices / f"{tts.DEFAULT_PIPER_VOICE}.onnx"
+    model.write_bytes(b"onnx")
+    assert tts.piper_model_path() == model
+
+    # A hand-edited .env may still name a path outright.
+    elsewhere = tmp_path / "elsewhere.onnx"
+    elsewhere.write_bytes(b"onnx")
+    monkeypatch.setenv("JARVIS_PIPER_VOICE", str(elsewhere))
+    assert tts.piper_model_path() == elsewhere
+
+
+def test_a_settable_voice_name_may_not_be_a_path():
+    """`JARVIS_PIPER_VOICE` is writable over HTTP, and onnxruntime executes
+    what it loads. A name resolves inside the voices directory; a path does
+    not get to arrive through a POST."""
+    import tts
+    assert tts.is_safe_voice_name("en_GB-alan-medium")
+    assert not tts.is_safe_voice_name("../../etc/passwd")
+    assert not tts.is_safe_voice_name("/tmp/evil.onnx")
+    assert not tts.is_safe_voice_name("")
+    # `$` matches before a trailing newline, so this is what an anchored
+    # pattern gated with `.match` would have waved through.
+    assert not tts.is_safe_voice_name("en_GB-alan-medium\n")
+    assert not tts.is_safe_voice_name("alan\nJARVIS_CLAUDE_PATH=/tmp/evil")
+
+
+@pytest.mark.asyncio
+async def test_piper_renders_a_wav_with_the_model_it_resolved(monkeypatch, tmp_path):
+    import tts
+    voices = tmp_path / "voices"
+    voices.mkdir()
+    model = voices / "en_GB-alan-medium.onnx"
+    model.write_bytes(b"onnx")
+    monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path))
+    monkeypatch.delenv("JARVIS_PIPER_VOICE", raising=False)
+    monkeypatch.setattr(tts, "piper_bin", lambda: "/opt/piper")
+    spawned: list = []
+    monkeypatch.setattr(tts, "_spawn_synth", _fake_spawn(spawned))
+
+    r = await tts.synthesize_chunk("Good evening, sir.", backend="piper")
+
+    assert r is not None and r.audio.startswith(b"RIFF")
+    argv = spawned[0]["argv"]
+    assert argv[0] == "/opt/piper"
+    assert argv[argv.index("-m") + 1] == str(model)
+    assert spawned[0]["text"] == "Good evening, sir.", "on stdin, as with `say`"
+
+
+@pytest.mark.asyncio
+async def test_piper_declines_without_its_binary_or_its_model(monkeypatch, tmp_path):
+    """Both are ordinary states — an optional dependency and a 63 MB download —
+    so the backend declines and logs a remedy rather than raising. What the
+    user then HEARS is `say`; that is the next test."""
+    import tts
+    monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path))
+    monkeypatch.setattr(tts, "piper_bin", lambda: None)
+    assert await tts.synthesize_chunk("x", backend="piper", fallback=False) is None
+
+    monkeypatch.setattr(tts, "piper_bin", lambda: "/opt/piper")
+    assert await tts.synthesize_chunk("x", backend="piper", fallback=False) is None, "no model"
+
+
+def test_backends_ready_reports_what_could_actually_speak(monkeypatch, tmp_path):
+    import tts
+    monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path))
+    monkeypatch.setattr(tts.shutil, "which", lambda name: "/usr/bin/say")
+    monkeypatch.setattr(tts, "piper_bin", lambda: None)
+    ready = tts.backends_ready()
+    assert ready == {"say": True, "piper": False, "fish": False}
+
+    voices = tmp_path / "voices"
+    voices.mkdir()
+    (voices / f"{tts.DEFAULT_PIPER_VOICE}.onnx").write_bytes(b"onnx")
+    monkeypatch.delenv("JARVIS_PIPER_VOICE", raising=False)
+    monkeypatch.setattr(tts, "piper_bin", lambda: "/opt/piper")
+    assert tts.backends_ready(fish_key="k") == {"say": True, "piper": True, "fish": True}
+
+
+# --- falling back rather than going quiet --------------------------------------
+
+@pytest.mark.asyncio
+async def test_a_backend_that_cannot_speak_hands_over_to_say(monkeypatch, tmp_path):
+    """Silence is the worst failure JARVIS has: a voice assistant that has
+    gone quiet looks broken, not misconfigured. `say` needs nothing, so it
+    takes over — and the result says who really spoke."""
+    import tts
+    monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path))       # no piper model
+    monkeypatch.setattr(tts, "piper_bin", lambda: "/opt/piper")
+    spawned: list = []
+    monkeypatch.setattr(tts, "_spawn_synth", _fake_spawn(spawned))
+
+    r = await tts.synthesize_chunk("Good evening, sir.", backend="piper")
+
+    assert r is not None and r.backend == tts.BACKEND_SAY
+    assert spawned and spawned[0]["argv"][0] == "say", "piper never ran; say did"
+
+
+@pytest.mark.asyncio
+async def test_the_hosted_backend_falls_back_too(monkeypatch):
+    """A network that is down should cost the voice, not the assistant."""
+    import tts
+    spawned: list = []
+    monkeypatch.setattr(tts, "_spawn_synth", _fake_spawn(spawned))
+
+    def boom(request):
+        raise httpx.ConnectError("down")
+
+    async with _client(boom) as c:
+        r = await tts.synthesize_chunk("x", api_key="k", voice_id="v", client=c,
+                                       backend="fish")
+    assert r is not None and r.backend == tts.BACKEND_SAY
+
+
+@pytest.mark.asyncio
+async def test_a_working_backend_is_never_labelled_a_fallback(monkeypatch, tmp_path):
+    import tts
+    voices = tmp_path / "voices"
+    voices.mkdir()
+    (voices / "en_GB-alan-medium.onnx").write_bytes(b"onnx")
+    monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("JARVIS_PIPER_VOICE", "en_GB-alan-medium")
+    monkeypatch.setattr(tts, "piper_bin", lambda: "/opt/piper")
+    monkeypatch.setattr(tts, "_spawn_synth", _fake_spawn([]))
+
+    r = await tts.synthesize_chunk("x", backend="piper")
+    assert r is not None and r.backend == tts.BACKEND_PIPER
+
+
+@pytest.mark.asyncio
+async def test_when_say_cannot_speak_either_there_is_nothing_left(monkeypatch, tmp_path):
+    """None means macOS itself would not speak — the scheduler's cue to fall
+    back on text, which is the last honest option."""
+    import tts
+    monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path))
+    monkeypatch.setattr(tts, "piper_bin", lambda: None)
+    monkeypatch.setattr(tts.shutil, "which", lambda name: None)
+    assert await tts.synthesize_chunk("x", backend="piper") is None
+
+
+@pytest.mark.asyncio
+async def test_fallback_can_be_switched_off(monkeypatch, tmp_path):
+    import tts
+    monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path))
+    monkeypatch.setattr(tts, "piper_bin", lambda: None)
+    monkeypatch.setattr(tts, "_spawn_synth", _fake_spawn([]))
+    assert await tts.synthesize_chunk("x", backend="piper", fallback=False) is None
 
 
 # --- the hosted backend -------------------------------------------------------
@@ -182,7 +363,7 @@ async def test_fish_is_reached_only_by_asking_for_it(monkeypatch):
     monkeypatch.delenv("JARVIS_TTS_BACKEND", raising=False)
     monkeypatch.setenv("FISH_API_KEY", "still-here")
     calls: list = []
-    monkeypatch.setattr(tts, "_spawn_say", _fake_say([]))
+    monkeypatch.setattr(tts, "_spawn_synth", _fake_spawn([]))
 
     async with _client(lambda req: calls.append(1) or httpx.Response(200, content=b"x")) as c:
         r = await tts.synthesize_chunk("hello", api_key="still-here", voice_id="v", client=c)
@@ -193,10 +374,12 @@ async def test_fish_is_reached_only_by_asking_for_it(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_non_200_returns_none():
+    """`fallback=False` throughout this section: these test the hosted backend
+    itself, not the `say` safety net underneath it."""
     import tts
     async with _client(lambda req: httpx.Response(401, content=b"nope")) as c:
         assert await tts.synthesize_chunk("x", api_key="k", voice_id="v", client=c,
-                                          backend="fish") is None
+                                          backend="fish", fallback=False) is None
 
 
 @pytest.mark.asyncio
@@ -208,7 +391,7 @@ async def test_transport_error_returns_none():
 
     async with _client(boom) as c:
         assert await tts.synthesize_chunk("x", api_key="k", voice_id="v", client=c,
-                                          backend="fish") is None
+                                          backend="fish", fallback=False) is None
 
 
 @pytest.mark.asyncio
@@ -218,7 +401,7 @@ async def test_empty_text_or_missing_key_short_circuits():
 
     async with _client(lambda req: calls.append(1) or httpx.Response(200, content=b"x")) as c:
         assert await tts.synthesize_chunk("   ", api_key="k", voice_id="v", client=c,
-                                          backend="fish") is None
+                                          backend="fish", fallback=False) is None
         assert await tts.synthesize_chunk("hi", api_key="", voice_id="v", client=c,
-                                          backend="fish") is None
+                                          backend="fish", fallback=False) is None
     assert calls == []

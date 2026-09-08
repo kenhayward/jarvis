@@ -18,7 +18,10 @@ When a user clones this repo and starts Claude Code, help them:
    newer) and log in with `claude` — JARVIS's brain runs on your Claude
    subscription, not on an API key
 3. Nothing to sign up for: the voice is macOS's own `say`, offline and
-   keyless. A Fish Audio key is optional and read only with
+   keyless. For the better local voice: `pip install -r requirements-piper.txt`
+   then `python -m piper.download_voices --download-dir data/voices
+   en_GB-alan-medium`, and set `JARVIS_TTS_BACKEND=piper` (or pick it in
+   Settings). A Fish Audio key is optional and read only with
    `JARVIS_TTS_BACKEND=fish`
 4. Install Python dependencies: pip install -r requirements.txt
 5. Install the Playwright browser: python -m playwright install chromium
@@ -46,8 +49,12 @@ this presents as "the UI is up but nothing works" rather than as an error.
 - **Communication**: WebSocket (JSON messages + binary audio)
 - **AI**: a long-lived Claude Code process (`brain.py`, Sonnet by default) on
   the user's subscription; no Anthropic API calls on the voice path
-- **TTS**: `tts.py` — macOS `say` (WAV, offline, default) or Fish Audio
-  (MP3, hosted, `JARVIS_TTS_BACKEND=fish`), one call per sentence chunk
+- **TTS**: `tts.py` — three backends, one call per sentence chunk: macOS
+  `say` (WAV, offline, default), `piper` (WAV, offline, neural, optional
+  dependency), or Fish Audio (MP3, hosted). `JARVIS_TTS_BACKEND` chooses, and
+  whichever is chosen falls back to `say` rather than going quiet — JARVIS
+  says so out loud, once, and `/api/settings/status` reports it as
+  `tts_fallback_from`
 - **System**: AppleScript for Terminal and Chrome integration
 - **Runs**: every Claude Code execution goes through one recorded pipeline —
   `run_store.py` (SQLite) + `run_executor.py`, surfaced at `/api/runs`,
@@ -97,10 +104,14 @@ the commit why the alternative was worse.
   forwards `tools/call` to `POST /internal/tool`
 - `speech.py` — Sentence splitting and the scheduler that owns every
   utterance JARVIS speaks
-- `tts.py` — Synthesis, one call per sentence chunk, two backends behind one
-  function. `say` writes WAV to a temp file (it cannot stream — `-o -` yields
-  nothing) with the text on STDIN, never argv; Fish streams MP3. A chunk that
-  cannot be synthesised is `None`, never an exception — the mouth survives it
+- `tts.py` — Synthesis, one call per sentence chunk, three backends behind
+  one function. Both local ones write a WAV to a temp file (neither can
+  stream: `say -o -` yields nothing, WAV headers needing seek) with the text
+  on STDIN, never argv; Fish streams MP3. Measured per sentence on this Mac:
+  `say` 0.45s, piper 0.67s warm. A configured backend that fails hands over
+  to `say` and the result names the backend that really spoke, so `None` now
+  means macOS itself would not speak either — never an exception, the mouth
+  survives both
 - `frontend/src/orb.ts` — Three.js particle orb visualization
 - `frontend/src/voice.ts` — Web Speech API + audio playback
 - `frontend/src/main.ts` — Frontend state machine
@@ -203,10 +214,22 @@ JARVIS builds**. It is only this repository's own copies that are gone.
 - `JARVIS_TTS_BACKEND` (optional, default `say`) — `say` for the local macOS
   voice, `fish` for Fish Audio. An unknown value falls back to `say` with a
   warning: a typo in `.env` must not cost the user his voice
-- `JARVIS_TTS_VOICE` (optional, default `Daniel`) — any voice `say -v '?'`
-  lists. `say -v Bogus` exits 0 and quietly uses the system default, so
-  preflight checks the name against that listing and warns
-- `JARVIS_TTS_RATE` (optional) — words per minute; unset is the voice's own
+- `JARVIS_TTS_VOICE` (optional, default `Daniel`) — the **`say`** voice: any
+  name `say -v '?'` lists. `say -v Bogus` exits 0 and quietly uses the system
+  default, so preflight checks the name against that listing and warns
+- `JARVIS_TTS_RATE` (optional) — words per minute for `say`; unset is the
+  voice's own
+- `JARVIS_PIPER_VOICE` (optional, default `en_GB-alan-medium`) — the **piper**
+  voice: a model name resolved inside `data_paths.voices_dir()`, or an
+  outright path. Its own variable rather than sharing `JARVIS_TTS_VOICE`, so
+  switching backend and back does not leave "Daniel" naming a piper model.
+  Over HTTP only a bare NAME may be stored — onnxruntime executes what it
+  loads
+- `JARVIS_PIPER_BIN` (optional) — where `piper` is. Not settable through the
+  API (it names a program JARVIS runs). By default JARVIS looks beside
+  `sys.executable` FIRST: the server runs as `.venv/bin/python server.py`
+  without the venv activated, so `which piper` finds nothing while
+  `.venv/bin/piper` is right there
 - `FISH_API_KEY` (optional) — Fish Audio TTS, read only when the backend is
   `fish`. JARVIS speaks without it
 - `FISH_VOICE_ID` (optional) — Voice model ID, with the fish backend
