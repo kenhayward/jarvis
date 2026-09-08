@@ -67,7 +67,8 @@ def wired(monkeypatch, tmp_path):
                                    "env": {"NOTION_TOKEN": SECRET}}}}))
     (home / "connections.json").write_text(json.dumps(
         {"notion": {"command": "npx", "env": {"NOTION_TOKEN": SECRET}}}))
-    (home / "MEMORY.md").write_text(f"- [a memory](x.md) — {SECRET}\n")
+    (home / "MEMORY.md").write_text(f"- [a memory](x.md) — {SECRET}\n",
+                                    encoding="utf-8")
     (data_paths.memory_dir() / "x.md").write_text(f"# x\n\n{SECRET}\n")
     (data_paths.journal_dir() / "j.md").write_text(f"# j\n\n{SECRET}\n")
     (data_paths.projects_dir() / "p.md").write_text(f"# p\n\n{SECRET}\n")

@@ -10,6 +10,24 @@ import pytest
 import session_steer
 
 
+# `socket.AF_UNIX` is POSIX-only; CPython does not expose it on Windows at
+# all. Every test below that BUILDS an inbox to steer into therefore has no
+# way to build one there.
+#
+# Read the skips for what they are. This is not a Windows bug to be fixed in
+# the tests: the steering TRANSPORT is unimplemented on Windows, and says so
+# — `CAP_SESSION_STEER` is deliberately absent from
+# `jarvis_platform/windows/__init__.py`, so `steer_session` is withdrawn and
+# the brain never sees it. There is nothing here to exercise yet, which is a
+# different thing from something failing. Windows publishes a named pipe
+# rather than a Unix socket (see `session_watch._inbox_exists`), so when that
+# transport is written these grow a second implementation and the skip goes.
+_HAS_AF_UNIX = hasattr(socket, "AF_UNIX")
+_AF_UNIX_REASON = ("AF_UNIX is POSIX-only and the Windows steering transport "
+                   "is unbuilt; CAP_SESSION_STEER is withdrawn there")
+_needs_af_unix = pytest.mark.skipif(not _HAS_AF_UNIX, reason=_AF_UNIX_REASON)
+
+
 def _wait_for_receipt(received, timeout=2.0):
     """`post_to_session` returns as soon as `sendall` completes, not once the
     fixture's server thread has looped back around, decoded, and appended to
@@ -33,6 +51,8 @@ def fake_session(tmp_path, monkeypatch):
     relative filename instead — still an isolated socket inside tmp_path,
     just addressed relatively.
     """
+    if not _HAS_AF_UNIX:
+        pytest.skip(_AF_UNIX_REASON)
     monkeypatch.chdir(tmp_path)
     # This agent itself runs inside a live Claude Code session, which sets
     # CLAUDE_CODE_MESSAGING_TOKEN in its own environment (confirmed present
@@ -81,6 +101,7 @@ def test_a_missing_socket_is_not_live_not_a_crash(tmp_path):
     assert session_steer.post_to_session(str(tmp_path / "nope.sock"), "hi") == "not_live"
 
 
+@_needs_af_unix
 def test_a_socket_that_refuses_the_connection_is_not_live(tmp_path, monkeypatch):
     """A stale .sock file left behind by a dead process."""
     monkeypatch.chdir(tmp_path)   # see fake_session: AF_UNIX path-length cap
@@ -489,6 +510,8 @@ def socket_factory(tmp_path, monkeypatch):
     on macOS and pytest's tmp_path alone routinely exceeds it. Never point
     any of this at /tmp/cc-socks — those are the user's live sessions.
     """
+    if not _HAS_AF_UNIX:
+        pytest.skip(_AF_UNIX_REASON)
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("CLAUDE_CODE_MESSAGING_TOKEN", raising=False)
     servers = []

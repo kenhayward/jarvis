@@ -241,7 +241,7 @@ def test_a_relative_slug_cannot_reach_a_real_markdown_file_outside(api):
     assert "the private one" not in r.text
 
 
-def test_a_symlink_out_of_the_folder_is_refused(api):
+def test_a_symlink_out_of_the_folder_is_refused(api, needs_symlinks):
     """A string scan cannot see this one: the slug is an ordinary name and
     the path only leaves the folder once it is resolved."""
     client, jm, data_paths, _rs = api

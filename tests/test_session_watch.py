@@ -118,7 +118,12 @@ def test_project_name_is_unaffected_for_a_normal_non_worktree_path():
 
 
 def test_config_roots_includes_both_defaults_and_the_env_extras(monkeypatch, tmp_path):
-    monkeypatch.setenv("JARVIS_CLAUDE_CONFIG_DIRS", f"{tmp_path}/x:{tmp_path}/y")
+    # os.pathsep, not ":" — the separator is ";" on Windows precisely
+    # because ":" already appears in every absolute path there ("C:\\").
+    # `config_roots` splits on os.pathsep, so a hard-coded ":" handed it
+    # one unsplittable string containing both paths.
+    monkeypatch.setenv("JARVIS_CLAUDE_CONFIG_DIRS",
+                       f"{tmp_path}/x{os.pathsep}{tmp_path}/y")
     roots = sw.config_roots()
     names = [r.name for r in roots]
     assert ".claude" in names and ".claude-orcha" in names
@@ -1152,7 +1157,7 @@ def test_subagents_under_the_second_root_are_still_counted(tmp_path):
 # ── the brain is the brain however the path is spelled ─────────────────────
 
 def test_a_symlinked_data_dir_does_not_turn_the_brain_into_a_conversation(
-        tmp_path, monkeypatch):
+        tmp_path, monkeypatch, needs_symlinks):
     """`_is_own_brain` compared paths textually. A symlinked
     `JARVIS_DATA_DIR` — the ordinary shape when data lives on another
     volume — spells the same directory two ways, and the brain then appeared
