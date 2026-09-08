@@ -217,8 +217,16 @@ def _opened(server, monkeypatch) -> list:
         opened.append(url)
         return {"success": True, "confirmation": "ok"}
 
-    from jarvis_platform.macos import launcher
-    monkeypatch.setattr(launcher, "browser", _open)
+    # Every implementation, not just macOS. Naming one platform's module here
+    # left this fake inert everywhere else: `current().launcher` was the
+    # Windows one, the REAL `browser()` ran, and the test saw an empty
+    # recorder while a browser window opened on the developer's screen. Same
+    # rot as tests/conftest.py and tests/test_start_build.py, and the same
+    # cure — see the note in conftest for why it is not keyed on sys.platform.
+    from jarvis_platform.macos import launcher as macos_launcher
+    from jarvis_platform.windows import launcher as windows_launcher
+    for module in (macos_launcher, windows_launcher):
+        monkeypatch.setattr(module, "browser", _open)
     return opened
 
 
@@ -236,7 +244,7 @@ DRIVERS = {
 
 
 def test_a_directory_index_that_is_a_link_to_jarviss_own_data_is_refused(
-        server, monkeypatch, tmp_path):
+        server, monkeypatch, tmp_path, needs_symlinks):
     """The audit's exact reproduction: `<data>/jarvis/mcp.json` holds the
     loopback tool token's path and a verbatim copy of every `env` block in
     the user's `connections.json` — their Notion token, their GitHub token.
@@ -253,7 +261,7 @@ def test_a_directory_index_that_is_a_link_to_jarviss_own_data_is_refused(
 
 
 def test_a_directory_index_that_is_a_link_out_of_every_project_is_refused(
-        server, monkeypatch, tmp_path):
+        server, monkeypatch, tmp_path, needs_symlinks):
     """Containment is re-decided too, not only the private-file wall. The
     link may point anywhere on the disk — `~/.ssh/id_rsa` is the case
     `_too_private_to_open` was written for, and a plain file outside every
@@ -267,8 +275,8 @@ def test_a_directory_index_that_is_a_link_out_of_every_project_is_refused(
     assert "opened=[]" in out, out
 
 
-def test_naming_the_file_and_naming_its_directory_agree(server, monkeypatch,
-                                                        tmp_path):
+def test_naming_the_file_and_naming_its_directory_agree(
+        server, monkeypatch, tmp_path, needs_symlinks):
     """The finding in one sentence: the two spellings of the same request
     gave different answers. They must give the same one."""
     import data_paths
@@ -306,7 +314,7 @@ def test_an_ordinary_directory_index_still_opens(server, monkeypatch,
 
 
 def test_an_index_that_is_a_link_INSIDE_the_project_still_opens(
-        server, monkeypatch, tmp_path):
+        server, monkeypatch, tmp_path, needs_symlinks):
     """A symlink is not itself the problem — a `site/index.html` linked to
     the project's own `build/index.html` is an ordinary way to lay out a
     repository, and re-resolving must not break it."""

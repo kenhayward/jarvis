@@ -658,7 +658,18 @@ def _fmt_reset(ts) -> str:
         when = datetime.fromtimestamp(float(ts))
     except (TypeError, ValueError, OSError, OverflowError):
         return "later"
-    clock = when.strftime("%-I:%M %p").replace(":00 ", " ")   # "10:00 AM" -> "10 AM"
+    # The hour and the day are built by hand rather than with `%-I` and
+    # `%-d`. That dash is a glibc extension meaning "no zero padding", and it
+    # is not portable: the Windows CRT rejects the whole format outright with
+    # `ValueError: Invalid format string`. The `try` above covers only
+    # `fromtimestamp`, so that exception went straight out of this function
+    # and took the spoken usage reading with it — measured, seven tests.
+    #
+    # Not `%I` with the zero stripped, which is the tempting one-liner: it
+    # turns 10:00 into "1:00" at ten o'clock the moment anyone writes
+    # `.lstrip("0")`. `hour % 12 or 12` is the whole of 12-hour time.
+    hour12 = when.hour % 12 or 12
+    clock = f"{hour12}:{when.strftime('%M %p')}".replace(":00 ", " ")
     days = (when.date() - datetime.now().date()).days
     if days <= 0:
         return clock
@@ -666,7 +677,7 @@ def _fmt_reset(ts) -> str:
         return f"tomorrow at {clock}"
     if days < 7:
         return f"{when.strftime('%A')} at {clock}"
-    return f"{when.strftime('%A %-d %B')} at {clock}"
+    return f"{when.strftime('%A')} {when.day} {when.strftime('%B')} at {clock}"
 
 
 # True but useless: "down" names neither cause nor remedy. When the brain's

@@ -1,3 +1,6 @@
+import os
+import sys
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -111,12 +114,29 @@ def test_a_non_dict_json_body_is_refused_cleanly(client):
 
 
 def test_the_token_file_is_not_world_readable(client):
+    """"Only this user can read it" is one promise with two spellings.
+
+    The mode bits are the POSIX one. On Windows a file's DACL carries it and
+    `os.chmod` cannot express 0o600 at all — measured, `chmod(path, 0)` there
+    leaves the file at mode 0o444 and perfectly readable. So the promise is
+    asserted in the platform's own terms: `adopt_private` opens a file ONLY
+    when it can prove it is private to this user (on Windows, that the DACL
+    is exactly one ACE naming us) and raises otherwise.
+    """
+    import os
+    import jarvis_platform
     c, server = client
     server.data_paths.ensure_tool_token()
-    mode = server.data_paths.tool_token_path().stat().st_mode & 0o777
-    assert mode == 0o600
+    path = server.data_paths.tool_token_path()
+
+    fd = jarvis_platform.current().secrets.adopt_private(path)
+    os.close(fd)                       # it proved the file is ours; that IS the check
+
+    if os.name == "posix":
+        assert path.stat().st_mode & 0o777 == 0o600
 
 
+@pytest.mark.skipif(os.name != "posix", reason="POSIX mode bits; see the twin below")
 def test_ensure_tool_token_fixes_permissions_of_a_pre_existing_file(client):
     """A local process that pre-creates the token path with looser
     permissions must not get to keep read access to it."""
@@ -133,7 +153,43 @@ def test_ensure_tool_token_fixes_permissions_of_a_pre_existing_file(client):
     assert mode == 0o600
 
 
-def test_a_symlink_in_the_token_path_is_refused_not_followed(client, tmp_path):
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows DACL adoption")
+def test_a_pre_existing_token_windows_cannot_prove_is_ours_is_refused(client):
+    """The same threat, answered more strictly, and deliberately so.
+
+    POSIX can look at a file, see it is owned by this user, and tighten the
+    mode — the twin above. Windows has no cheap equivalent of `getuid`, so
+    `windows/secrets.py` uses the DACL as the ownership test, and a DACL it
+    did not write is not proof of anything: an inherited one names SYSTEM and
+    Administrators too. It therefore refuses rather than re-permissioning,
+    because adopting the file would mean trusting a token somebody else chose
+    and knows, and deleting somebody else's file is not JARVIS's to do.
+
+    A file written by any ordinary means gets inherited ACLs, which is what
+    this plants. The refusal is an exception out of `ensure_tool_token`, and
+    that is called before anything else at startup — so JARVIS does not boot
+    rather than booting with a token a stranger picked.
+    """
+    c, server = client
+    path = server.data_paths.tool_token_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    # UNLINK first. The fixture's app start has already made a proper token
+    # here, and on Windows rewriting a file does not touch its DACL — the
+    # planted content would have kept JARVIS's own single-ACE grant and been
+    # adopted quite correctly. A file has to be newly CREATED to inherit the
+    # directory's ACLs, which is what makes it look like somebody else's.
+    path.unlink(missing_ok=True)
+    path.write_text("pre-existing-token", encoding="utf-8")
+
+    with pytest.raises(OSError, match="not granted solely to this user"):
+        server.data_paths.ensure_tool_token()
+
+    assert path.read_text(encoding="utf-8") == "pre-existing-token", \
+        "somebody else's file is refused, never rewritten"
+
+
+def test_a_symlink_in_the_token_path_is_refused_not_followed(
+        client, tmp_path, needs_symlinks):
     """Adopting a pre-existing file is required across restarts. Adopting
     whatever a *symlink* points at is not.
 
@@ -174,16 +230,37 @@ class _FakeBrain:
         pass
 
 
+def _an_acting_tool(server) -> str:
+    """The name of an acting tool this platform actually offers.
+
+    The gate under test is the ORIGIN gate — an acting tool may not run on a
+    turn the user did not drive — and that gate is the same one whichever
+    acting tool reaches it. `steer_session` was named literally, and it is
+    withdrawn on Windows, so the dispatch refused it as an unknown tool
+    BEFORE the gate was reached: the tests failed for a reason that had
+    nothing to do with what they are about.
+
+    Picked from the platform's own list rather than hard-coded a second
+    time, so this does not have to be revisited when a capability moves.
+    """
+    import jarvis_platform as jp
+    withdrawn = jp.current().withdrawn_tools()
+    for name in server.ACTING_TOOLS:
+        if name not in withdrawn:
+            return name
+    pytest.skip("this platform offers no acting tool to exercise the gate")
+
+
 def test_an_acting_tool_is_refused_outside_a_user_turn(client, monkeypatch):
     """The origin gate lives in the server, not the prompt: a hostile string in
     somebody else's transcript must never be able to make JARVIS act."""
     c, server = client
     token = server.data_paths.ensure_tool_token()
-    monkeypatch.setitem(server.TOOL_HANDLERS, "steer_session",
-                        lambda args: "sent")
+    tool = _an_acting_tool(server)
+    monkeypatch.setitem(server.TOOL_HANDLERS, tool, lambda args: "sent")
     for origin in (None, "watcher", "system"):
         monkeypatch.setattr(server, "brain_instance", _FakeBrain(origin))
-        r = c.post("/internal/tool", json={"tool": "steer_session",
+        r = c.post("/internal/tool", json={"tool": tool,
                                            "arguments": {"name": "x", "prompt": "y"}},
                    headers={"Authorization": f"Bearer {token}"})
         assert r.status_code == 200
@@ -194,10 +271,10 @@ def test_an_acting_tool_is_refused_outside_a_user_turn(client, monkeypatch):
 def test_an_acting_tool_is_allowed_during_a_user_turn(client, monkeypatch):
     c, server = client
     token = server.data_paths.ensure_tool_token()
-    monkeypatch.setitem(server.TOOL_HANDLERS, "steer_session",
-                        lambda args: "sent")
+    tool = _an_acting_tool(server)
+    monkeypatch.setitem(server.TOOL_HANDLERS, tool, lambda args: "sent")
     monkeypatch.setattr(server, "brain_instance", _FakeBrain("user"))
-    r = c.post("/internal/tool", json={"tool": "steer_session",
+    r = c.post("/internal/tool", json={"tool": tool,
                                        "arguments": {"name": "x", "prompt": "y"}},
                headers={"Authorization": f"Bearer {token}"})
     assert r.status_code == 200 and r.json() == {"ok": True, "text": "sent"}
