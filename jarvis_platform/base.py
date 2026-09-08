@@ -163,6 +163,117 @@ class _NoLauncher:
 NO_LAUNCHER = _NoLauncher()
 
 
+# --- answering a prompt in somebody else's terminal ------------------------
+#
+# The most dangerous thing JARVIS does: a synthetic keystroke aimed at a
+# window on the user's machine. Two of the three safety properties are
+# platform-INDEPENDENT and therefore live here, not in an implementation:
+#
+# 1. The vocabulary is closed. Return, Escape, and a single digit 1-9. That
+#    is the whole set, and it is a boundary rather than a convenience —
+#    anything else is refused before any script is composed, so there is
+#    never untrusted text to escape. This module never types text, on any
+#    platform, and a second implementation does not get to widen it.
+# 2. Nothing raises. Every path returns an outcome string, so the caller can
+#    always say something useful and always has something to audit.
+#
+# The third — that the target is found by IDENTITY and never by focus — can
+# only be kept by an implementation, because what identifies a terminal
+# differs per platform. It is the protocol's central promise all the same;
+# see `Dialogs.terminal_of`.
+
+SENT = "sent"
+NO_TERMINAL = "no_tty"        # the process has no terminal we can address
+NOT_FOUND = "not_found"       # a terminal we cannot reach hosts it
+NOT_PERMITTED = "not_permitted"   # the OS refused us
+FAILED = "failed"             # the attempt errored, timed out, or said something odd
+BAD_KEY = "bad_key"           # defensive: a key outside the closed vocabulary
+
+# The wire values are unchanged from when this lived in `dialog.py` — they
+# are recorded in the steer audit table, so a rename would orphan history.
+# `no_tty` in particular is read as "no terminal of its own", not literally
+# as a POSIX tty; Windows consoles have no tty and the outcome still applies.
+
+_ALIASES = {
+    "enter": "return",
+    "return": "return",
+    "yes": "return",       # "yes" answers a permission prompt with Return
+    "y": "return",
+    "escape": "escape",
+    "esc": "escape",
+    "cancel": "escape",
+    "no": "escape",
+    "n": "escape",
+}
+
+
+def normalize_key(key) -> str | None:
+    """The closed vocabulary, or None. None means REFUSE — never interpret.
+
+    Returns "return", "escape", or a single digit "1".."9". Anything else,
+    including free text that merely starts with an accepted word, is None.
+    """
+    if not isinstance(key, str):
+        return None
+    k = key.strip().lower()
+    if k in _ALIASES:
+        return _ALIASES[k]
+    if len(k) == 1 and k in "123456789":
+        return k
+    return None
+
+
+def spoken_key(normalized: str) -> str:
+    """How the read-back names the key. Must match what actually gets sent."""
+    return {"return": "Return", "escape": "Escape"}.get(normalized, normalized)
+
+
+class Dialogs(Protocol):
+    """Press one key in the terminal a specific Claude Code session runs in."""
+
+    async def terminal_of(self, pid) -> str | None:
+        """An OPAQUE identity for the terminal that owns `pid`, or None.
+
+        Callers compare these and never parse them: server.py groups a
+        session's pids by this value to detect one spanning several
+        terminals, and refuses rather than guessing when it does. On macOS
+        it is a tty path; on another platform it may be a window handle.
+        Nothing outside the implementation may assume either.
+        """
+        ...
+
+    async def answer(self, pid: int, key: str) -> str:
+        """Press `key` in the terminal owning `pid`. Never raises.
+
+        Returns one of the outcome constants above. Only SENT means a
+        keystroke actually left the machine's event queue.
+
+        The implementation must find its target by identity, never by
+        focus — aimed wrong, this types into whatever the user is actually
+        working in. NOT_FOUND is a normal and correct answer, and must
+        never be upgraded into a best guess.
+        """
+        ...
+
+
+class _NoDialogs:
+    """A platform with no way to aim a keystroke safely.
+
+    Answers NOT_FOUND, which server.py already speaks as "another
+    application is hosting it, so that one needs your own hand" — true, and
+    the right thing to say. Reached only behind a withdrawn CAP_DIALOG_KEY.
+    """
+
+    async def terminal_of(self, pid) -> str | None:
+        return None
+
+    async def answer(self, pid: int, key: str) -> str:
+        return NOT_FOUND
+
+
+NO_DIALOGS = _NoDialogs()
+
+
 @dataclass(frozen=True)
 class Host:
     """One platform, what it can do, and how it does it.
@@ -176,6 +287,7 @@ class Host:
     capabilities: frozenset[str]
     notifications: Notifications = field(default=NO_NOTIFICATIONS)
     launcher: Launcher = field(default=NO_LAUNCHER)
+    dialogs: Dialogs = field(default=NO_DIALOGS)
 
     def can(self, capability: str) -> bool:
         return capability in self.capabilities

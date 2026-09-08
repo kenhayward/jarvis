@@ -87,7 +87,6 @@ import usage_store
 import web_auth
 from run_executor import RunExecutor
 import data_paths
-import dialog
 import jarvis_memory
 import jarvis_platform
 import tts
@@ -3606,7 +3605,7 @@ class _StagedDialog:
     """A validated keypress waiting for the current turn to finish speaking.
 
     `pid` is already resolved to a process whose tty we read successfully, and
-    `key` has already been through `dialog.normalize_key` — so what is stored
+    `key` has already been through `normalize_key` — so what is stored
     here is one of a closed set of values, never anything the user or the
     brain wrote.
     """
@@ -3657,7 +3656,7 @@ async def _perform_dialog(item: _StagedDialog) -> None:
     `wait_for` returns False for a cancel and a timeout alike.
     """
     recorded = False
-    said = dialog.spoken_key(item.key)
+    said = jarvis_platform.base.spoken_key(item.key)
 
     def record(outcome: str) -> None:
         nonlocal recorded
@@ -3692,21 +3691,22 @@ async def _perform_dialog(item: _StagedDialog) -> None:
             await speech.say("Cancelled, sir.", Priority.NORMAL)
             return
 
-        outcome = await dialog.answer(item.pid, item.key)
+        outcome = await jarvis_platform.current().dialogs.answer(
+            item.pid, item.key)
         record(outcome)
-        if outcome == dialog.SENT:
+        if outcome == jarvis_platform.base.SENT:
             await speech.say(f"Pressed {said} on {_said_name(item)}.",
                              Priority.NORMAL)
-        elif outcome == dialog.NOT_FOUND:
+        elif outcome == jarvis_platform.base.NOT_FOUND:
             await speech.say(
                 f"{_said_name(item)} isn't in a Terminal window I can reach, "
                 f"sir — another application is hosting it, so that one needs "
                 f"your own hand.", Priority.NORMAL)
-        elif outcome == dialog.NOT_PERMITTED:
+        elif outcome == jarvis_platform.base.NOT_PERMITTED:
             await speech.say(
                 "macOS won't let me send keystrokes, sir — I'd need accessibility "
                 "permission in System Settings.", Priority.NORMAL)
-        elif outcome == dialog.NO_TTY:
+        elif outcome == jarvis_platform.base.NO_TERMINAL:
             await speech.say(
                 f"{_said_name(item)} has no terminal of its own any more, "
                 f"sir — I pressed nothing.", Priority.NORMAL)
@@ -3734,7 +3734,8 @@ async def _tty_for_session_or_explain(session):
     # loop this was up to a second a pid of frozen microphone (it was five,
     # before dialog's ceiling came down); concurrently off the loop it is one
     # round-trip for all of them, and the voice path never waits on `ps`.
-    ttys = await asyncio.gather(*(dialog.tty_for_pid_async(pid) for pid in pids))
+    dialogs = jarvis_platform.current().dialogs
+    ttys = await asyncio.gather(*(dialogs.terminal_of(pid) for pid in pids))
     for pid, tty in zip(pids, ttys):
         if tty and tty not in found:
             found[tty] = pid
@@ -3775,7 +3776,7 @@ async def tool_answer_dialog(args: dict) -> str:
                                f"dialog:{reason or 'unresolved'}")
         return problem
 
-    key = dialog.normalize_key(raw_key)
+    key = jarvis_platform.base.normalize_key(raw_key)
     if key is None:
         # Refused before anything is staged, and long before any AppleScript
         # exists. JARVIS presses keys, he does not type: there is no
@@ -3807,7 +3808,7 @@ async def tool_answer_dialog(args: dict) -> str:
                                 voice_name=session.voice_name,
                                 project=session.project, pid=pid, key=key))
     return (f"staged — I'll say what I'm about to press and then press "
-            f"{dialog.spoken_key(key)} on {_said_name(session)} the moment this "
+            f"{jarvis_platform.base.spoken_key(key)} on {_said_name(session)} the moment this "
             f"turn ends, unless he stops me. It only works if that session is "
             f"in a Terminal window; if it isn't, he'll be told. Say briefly "
             f"that it is going out and end your turn; do not call this tool "

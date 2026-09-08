@@ -264,3 +264,52 @@ async def test_a_host_without_a_launcher_refuses_in_the_shape_callers_expect():
                    await host.launcher.editor("/tmp/x")):
         assert result["success"] is False
         assert result["confirmation"]
+
+
+def test_the_macos_host_carries_the_real_dialogs():
+    from jarvis_platform.macos import MACOS, dialogs
+    assert MACOS.dialogs is dialogs
+
+
+def test_the_closed_vocabulary_is_the_protocol_not_one_platforms_idea():
+    """It lives in `base` because a second implementation does not get to
+    widen it. Return, Escape, one digit — and nothing that merely starts
+    with an accepted word."""
+    from jarvis_platform import base
+    assert base.normalize_key("yes") == "return"
+    assert base.normalize_key("  ESC ") == "escape"
+    assert base.normalize_key("7") == "7"
+    for refused in ("yes please", "return true", "", "0", "10", "rm -rf /",
+                    None, 3, "\n", "return; rm -rf /"):
+        assert base.normalize_key(refused) is None, refused
+
+    # Surrounding whitespace is stripped, and that is safe rather than lax:
+    # what comes back is one of the fixed tokens, never a substring of the
+    # input. Nothing the caller wrote can reach the script it composes.
+    assert base.normalize_key("y\n") == "return"
+    assert base.normalize_key(" 3 ") == "3"
+    allowed = {"return", "escape", *"123456789"}
+    for candidate in ("y\n", " 3 ", "ESC", "Enter", "cancel", "no"):
+        out = base.normalize_key(candidate)
+        assert out is None or out in allowed, (candidate, out)
+
+
+@pytest.mark.asyncio
+async def test_a_host_without_dialogs_presses_nothing_and_says_not_found():
+    """NOT_FOUND is what server.py already speaks as 'another application is
+    hosting it, so that one needs your own hand' — true, and the right thing
+    to say. It must never be upgraded into a best guess."""
+    from jarvis_platform import base
+    host = jp.Host(name="plan9", capabilities=frozenset())
+    assert await host.dialogs.terminal_of(4242) is None
+    assert await host.dialogs.answer(4242, "return") == base.NOT_FOUND
+
+
+def test_the_outcome_wire_values_are_unchanged():
+    """They are written into the steer audit table, so a rename orphans
+    history. `no_tty` is read as 'no terminal of its own', not literally as
+    a POSIX tty — Windows consoles have none and the outcome still applies."""
+    from jarvis_platform import base
+    assert (base.SENT, base.NO_TERMINAL, base.NOT_FOUND,
+            base.NOT_PERMITTED, base.FAILED, base.BAD_KEY) == \
+        ("sent", "no_tty", "not_found", "not_permitted", "failed", "bad_key")

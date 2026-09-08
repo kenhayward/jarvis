@@ -129,8 +129,11 @@ the commit why the alternative was worse.
 - `session_watch.py` — Watches every Claude Code session on the machine
   (process / conversation / project)
 - `session_steer.py` — Sends a message into a running session's inbox socket
-- `dialog.py` — Answers a permission prompt in a Terminal window by sending
-  it a keystroke (needs Accessibility)
+- `jarvis_platform/macos/dialogs.py` — Answers a permission prompt in a
+  Terminal window by sending it a keystroke (needs Accessibility). The
+  closed key vocabulary (`normalize_key`) and the outcome constants are in
+  `jarvis_platform/base.py`, not here: they are the protocol, and a second
+  implementation does not get to widen either. Was `dialog.py`
 - `jarvis_platform/macos/notifications.py` — macOS notification fallback
   when no browser tab is connected to speak through. Reached as
   `jarvis_platform.current().notifications`; a platform without one

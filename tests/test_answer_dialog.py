@@ -3,7 +3,7 @@
 NOT ONE TEST IN THIS FILE MAY SEND A REAL KEYSTROKE OR ACTIVATE AN APPLICATION.
 The developer runs this suite with sixteen live Claude Code sessions and real
 work open; a stray Return would land in whichever of them happened to be
-frontmost. Every test therefore mocks `dialog._osascript` — the single process
+frontmost. Every test therefore mocks `dialogs._osascript` — the single process
 boundary — and `dialog._terminal_is_running`, so `osascript` is never spawned
 and Terminal.app is never even asked whether it exists. If you add a test here
 that does not stub both, it is wrong however green it runs.
@@ -14,7 +14,8 @@ import time
 
 import pytest
 
-import dialog
+from jarvis_platform import base
+from jarvis_platform.macos import dialogs as dialog
 
 
 # --- the closed vocabulary --------------------------------------------------
@@ -27,7 +28,7 @@ import dialog
     ("1", "1"), ("9", "9"), ("5", "5"),
 ])
 def test_the_accepted_vocabulary_normalizes(raw, expected):
-    assert dialog.normalize_key(raw) == expected
+    assert base.normalize_key(raw) == expected
 
 
 @pytest.mark.parametrize("raw", [
@@ -48,7 +49,7 @@ def test_the_accepted_vocabulary_normalizes(raw, expected):
     ["return"],
 ])
 def test_everything_outside_the_vocabulary_is_refused(raw):
-    assert dialog.normalize_key(raw) is None
+    assert base.normalize_key(raw) is None
 
 
 @pytest.mark.asyncio
@@ -70,7 +71,7 @@ async def test_a_refused_key_never_reaches_applescript(raw, monkeypatch):
     monkeypatch.setattr(dialog, "tty_for_pid",
                         lambda pid: pytest.fail("the key is checked first"))
 
-    assert await dialog.answer(4242, raw) == dialog.BAD_KEY
+    assert await dialog.answer(4242, raw) == base.BAD_KEY
     assert calls == []
 
 
@@ -157,7 +158,7 @@ async def test_sent(fake_osascript, monkeypatch):
     results.append((0, _enumeration((12, 3, "/dev/ttys006")), ""))
     results.append((0, "ok\n", ""))
 
-    assert await dialog.answer(999, "yes") == dialog.SENT
+    assert await dialog.answer(999, "yes") == base.SENT
 
     assert len(calls) == 2
     assert "key code 36" in calls[1]
@@ -168,7 +169,7 @@ async def test_no_tty_presses_nothing(fake_osascript, monkeypatch):
     calls, _ = fake_osascript
     monkeypatch.setattr(dialog, "tty_for_pid", lambda pid: None)
 
-    assert await dialog.answer(999, "return") == dialog.NO_TTY
+    assert await dialog.answer(999, "return") == base.NO_TERMINAL
     assert calls == [], "a session with no terminal must not reach AppleScript"
 
 
@@ -182,7 +183,7 @@ async def test_not_found_when_no_terminal_tab_owns_that_tty(fake_osascript,
     results.append((0, _enumeration((11, 1, "/dev/ttys001"),
                                     (11, 2, "/dev/ttys002")), ""))
 
-    assert await dialog.answer(999, "return") == dialog.NOT_FOUND
+    assert await dialog.answer(999, "return") == base.NOT_FOUND
 
     assert len(calls) == 1, "only the read-only enumeration may have run"
     assert "keystroke" not in calls[0] and "key code" not in calls[0]
@@ -196,7 +197,7 @@ async def test_not_found_when_terminal_is_not_running_at_all(fake_osascript,
     monkeypatch.setattr(dialog, "tty_for_pid", lambda pid: "/dev/ttys006")
     monkeypatch.setattr(dialog, "_terminal_is_running", lambda: False)
 
-    assert await dialog.answer(999, "return") == dialog.NOT_FOUND
+    assert await dialog.answer(999, "return") == base.NOT_FOUND
     assert calls == []
 
 
@@ -212,7 +213,7 @@ async def test_not_permitted(stderr, fake_osascript, monkeypatch):
     results.append((0, _enumeration((12, 1, "/dev/ttys006")), ""))
     results.append((1, "", stderr))
 
-    assert await dialog.answer(999, "escape") == dialog.NOT_PERMITTED
+    assert await dialog.answer(999, "escape") == base.NOT_PERMITTED
 
 
 @pytest.mark.asyncio
@@ -223,7 +224,7 @@ async def test_failed_when_the_script_errors_for_another_reason(fake_osascript,
     results.append((0, _enumeration((12, 1, "/dev/ttys006")), ""))
     results.append((1, "", "execution error: something else entirely (-1728)"))
 
-    assert await dialog.answer(999, "3") == dialog.FAILED
+    assert await dialog.answer(999, "3") == base.FAILED
 
 
 @pytest.mark.asyncio
@@ -236,7 +237,7 @@ async def test_failed_when_osascript_hangs_and_is_killed(fake_osascript,
     results.append((0, _enumeration((12, 1, "/dev/ttys006")), ""))
     results.append((-1, "", "timeout"))
 
-    assert await dialog.answer(999, "return") == dialog.FAILED
+    assert await dialog.answer(999, "return") == base.FAILED
 
 
 @pytest.mark.asyncio
@@ -245,7 +246,7 @@ async def test_answer_never_raises(fake_osascript, monkeypatch):
         raise RuntimeError("ps exploded")
 
     monkeypatch.setattr(dialog, "tty_for_pid", boom)
-    assert await dialog.answer(999, "return") == dialog.FAILED
+    assert await dialog.answer(999, "return") == base.FAILED
 
 
 @pytest.mark.asyncio
@@ -256,7 +257,7 @@ async def test_a_tab_that_moved_between_lookup_and_press_is_not_pressed(
     results.append((0, _enumeration((12, 1, "/dev/ttys006")), ""))
     results.append((0, "moved\n", ""))
 
-    assert await dialog.answer(999, "return") == dialog.NOT_FOUND
+    assert await dialog.answer(999, "return") == base.NOT_FOUND
 
 
 # --- focus ------------------------------------------------------------------
@@ -270,7 +271,7 @@ async def test_the_frontmost_app_is_captured_first_and_restored_after(
     results.append((0, "ok\n", ""))
     calls, _ = fake_osascript
 
-    assert await dialog.answer(999, "return") == dialog.SENT
+    assert await dialog.answer(999, "return") == base.SENT
 
     send = calls[1]
     capture = send.index("name of first application process whose frontmost is true")
@@ -386,7 +387,7 @@ def tool(wired, monkeypatch):
     async def fake_answer(pid, key):
         log.append(("pressed", (pid, key)))
         pressed.append((pid, key))
-        return dialog.SENT
+        return base.SENT
 
     monkeypatch.setattr(server, "speech", speech)
     monkeypatch.setattr(server, "brain_instance", FakeBrain())
@@ -449,7 +450,7 @@ async def test_a_cancel_word_in_the_window_blocks_the_keypress(wired, monkeypatc
 
     async def fake_answer(pid, key):
         pressed.append((pid, key))
-        return dialog.SENT
+        return base.SENT
 
     monkeypatch.setattr(server, "speech", speech)
     monkeypatch.setattr(server, "brain_instance", FakeBrain())
@@ -476,7 +477,7 @@ async def test_a_bargein_during_the_readback_blocks_it_and_records_a_cancel(
 
     async def fake_answer(pid, key):
         pressed.append((pid, key))
-        return dialog.SENT
+        return base.SENT
 
     monkeypatch.setattr(server, "speech", speech)
     monkeypatch.setattr(server, "brain_instance", FakeBrain())
@@ -500,7 +501,7 @@ async def test_a_readback_that_was_never_heard_presses_nothing(wired, monkeypatc
 
     async def fake_answer(pid, key):
         pressed.append((pid, key))
-        return dialog.SENT
+        return base.SENT
 
     monkeypatch.setattr(server, "speech", speech)
     monkeypatch.setattr(server, "brain_instance", FakeBrain())
@@ -523,7 +524,7 @@ async def test_no_voice_refuses_rather_than_pressing_unannounced(wired, monkeypa
 
     async def fake_answer(pid, key):
         pressed.append((pid, key))
-        return dialog.SENT
+        return base.SENT
 
     monkeypatch.setattr(server, "speech", None)
     monkeypatch.setattr(server, "brain_instance", FakeBrain())
@@ -620,11 +621,11 @@ async def test_a_session_spanning_two_terminals_asks_rather_than_picking(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("outcome,expected", [
-    (dialog.SENT, "dialog:sent"),
-    (dialog.NO_TTY, "dialog:no_tty"),
-    (dialog.NOT_FOUND, "dialog:not_found"),
-    (dialog.NOT_PERMITTED, "dialog:not_permitted"),
-    (dialog.FAILED, "dialog:failed"),
+    (base.SENT, "dialog:sent"),
+    (base.NO_TERMINAL, "dialog:no_tty"),
+    (base.NOT_FOUND, "dialog:not_found"),
+    (base.NOT_PERMITTED, "dialog:not_permitted"),
+    (base.FAILED, "dialog:failed"),
 ])
 async def test_every_terminal_path_writes_exactly_one_audit_row(
         outcome, expected, wired, monkeypatch):
@@ -681,7 +682,7 @@ async def test_an_unreachable_host_is_reported_honestly(wired, monkeypatch):
     speech = FakeSpeech()
 
     async def fake_answer(pid, key):
-        return dialog.NOT_FOUND
+        return base.NOT_FOUND
 
     monkeypatch.setattr(server, "speech", speech)
     monkeypatch.setattr(server, "brain_instance", FakeBrain())
@@ -770,7 +771,7 @@ async def test_a_slow_ps_does_not_freeze_the_loop(monkeypatch):
 
     monkeypatch.setattr(dialog, "tty_for_pid", slow)
     async with _Ticker() as ticker:
-        assert await dialog.answer(4242, "return") == dialog.NO_TTY
+        assert await dialog.answer(4242, "return") == base.NO_TERMINAL
     assert ticker.ticks > 30, (
         f"the loop only got {ticker.ticks} turns while `ps` ran — the voice "
         "path shares this thread")
@@ -786,7 +787,7 @@ async def test_a_slow_pgrep_does_not_freeze_the_loop(monkeypatch):
 
     monkeypatch.setattr(dialog, "_terminal_is_running", slow)
     async with _Ticker() as ticker:
-        assert await dialog.answer(4242, "return") == dialog.NOT_FOUND
+        assert await dialog.answer(4242, "return") == base.NOT_FOUND
     assert ticker.ticks > 30, (
         f"the loop only got {ticker.ticks} turns while `pgrep` ran")
 

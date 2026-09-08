@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import sys
 
+from . import base  # noqa: F401  (server.py reaches base.SENT etc. through this)
 from .base import (  # noqa: F401  (re-exported: this is the public surface)
     ALL_CAPABILITIES,
     CAP_BROWSER,
