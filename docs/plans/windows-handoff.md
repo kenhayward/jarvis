@@ -22,18 +22,44 @@ are ordered the way they are. This document is only about doing phase 3.
 
 ### The Windows number, and how it moved
 
-| | failed | passed | errors |
-|---|---|---|---|
-| first run on a real box | 267 | 1788 | 443 |
-| after the four fixes below | **266** | **2215** | **11** |
+| | failed | passed | errors | PR |
+|---|---|---|---|---|
+| first run on a real box | 267 | 1788 | 443 | — |
+| portability defects | 266 | 2215 | 11 | #6 |
+| project resolution + test isolation | 126 | 2351 | 11 | #7 |
+| named pipe, journal order, memory encoding | 95 | 2372 | **0** | #8 |
+| template line endings | 88 | 2379 | 0 | #9 |
+| pid probe, run executor, brain | *pending* | | | |
 
-Read that carefully: the ERRORS collapsed and 427 more tests pass, but the
-FAILURE count barely moved. The errors were four portability defects in
-shared code. The 266 failures are a different thing — they are the port
-itself being unfinished, and they are the real work remaining.
+Read the first two rows carefully: the ERRORS collapsed while the FAILURE
+count barely moved. The errors were portability defects in shared code; the
+failures are the port itself being unfinished, and they were the real work.
 
 Boot is no longer the blocker: `ensure_tool_token()` returns a token, and
 `import usage_scan` (and therefore `import server`) succeeds.
+
+### A Windows limitation that is NOT a bug to fix
+
+**A child that closes stdout and keeps running never gives the parent EOF
+on Windows.** Measured, and reproducible in twenty lines with none of this
+project involved: the parent's read blocks until the process EXITS.
+
+This matters to `run_executor._drive`. Its post-EOF grace
+(`eof_grace_sec`, sub-second) exists precisely so such a child is killed
+promptly and its concurrency permit handed back. That branch cannot fire
+here, because the signal that triggers it never arrives.
+
+The invariant survives: what "a run always reaches a terminal state" rests
+on is the `wait_for(reader, timeout=timeout_sec)` above it, and that still
+bounds the run. What is lost is promptness — the bound becomes the run
+timeout, **six hours by default**, rather than a fraction of a second. A
+misbehaving child therefore holds a concurrency permit far longer on
+Windows than on macOS.
+
+Nothing in this repository can fix that; it is the OS. It is written down
+because the alternative is someone rediscovering it as a mystery hang. The
+two tests that assert the fast path probe for the EOF and skip when it is
+absent, so they resume by themselves if a future Python delivers it.
 
 ### The four defects, none of them in `jarvis_platform/windows/`
 

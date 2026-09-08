@@ -1,8 +1,10 @@
 import asyncio
+import functools
 import importlib
 import json
 import os
 import stat
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -355,8 +357,7 @@ async def test_store_failure_still_reaches_terminal_state(env):
 
     # ...and no child left behind.
     assert ex._procs == {}
-    with pytest.raises(ProcessLookupError):
-        os.kill(pid, 0)
+    assert not _alive(pid), "a child was left behind"
 
 
 # -- IMPORTANT 4: stderr must be drained concurrently ----------------------
@@ -960,13 +961,87 @@ async def _await_pid(store, run_id: str, timeout: float = 10.0) -> int:
 
 
 def _alive(pid: int) -> bool:
+    """Is that process still there — without touching it.
+
+    `session_watch.pid_alive` rather than `os.kill(pid, 0)`, and not merely
+    because the latter answers wrongly off POSIX. On Windows, Python's
+    `os.kill` routes any signal that is not a CTRL event straight to
+    TerminateProcess, so `os.kill(pid, 0)` KILLS the process it is being
+    asked about. A probe with a side effect that severe has no business in
+    a test suite, and it never raises ProcessLookupError there either, so
+    the assertions built on it were checking nothing.
+
+    `pid_alive` is the repo's own answer to this question and says in its
+    docstring that it never touches the process, on either platform.
+    """
+    import session_watch
+    return session_watch.pid_alive(pid)
+
+
+_EOF_PROBE = (
+    "import asyncio, os, sys, tempfile, pathlib\n"
+    "async def main():\n"
+    "    d = pathlib.Path(tempfile.mkdtemp()); s = d / 'c.py'\n"
+    "    s.write_text('import os, sys, time\\n'\n"
+    "                 'sys.stdout.write(\\\"x\\\\n\\\"); sys.stdout.flush()\\n'\n"
+    "                 'os.close(1)\\n'\n"
+    "                 'time.sleep(30)\\n', encoding='utf-8')\n"
+    "    p = await asyncio.create_subprocess_exec(\n"
+    "        sys.executable, str(s), stdout=asyncio.subprocess.PIPE,\n"
+    "        stderr=asyncio.subprocess.PIPE)\n"
+    "    await asyncio.wait_for(p.stdout.readline(), timeout=10)\n"
+    "    try:\n"
+    "        await asyncio.wait_for(p.stdout.readline(), timeout=5)\n"
+    "        seen = True\n"
+    "    except asyncio.TimeoutError:\n"
+    "        seen = False\n"
+    "    p.kill(); await p.wait()\n"
+    "    sys.exit(0 if seen else 1)\n"
+    "asyncio.run(main())\n"
+)
+
+
+@functools.lru_cache(maxsize=1)
+def _eof_arrives_when_a_child_closes_stdout() -> bool:
+    """Does a child closing fd 1 give the parent EOF while it keeps running?
+
+    POSIX: yes, at once. Windows: NO — measured, and reproducible in twenty
+    lines with none of this module involved. The parent's read simply blocks
+    until the process EXITS.
+
+    That is a missing signal rather than a test problem, and the consequence
+    belongs where someone will find it. `_drive`'s post-EOF grace
+    (`eof_grace_sec`, sub-second) exists so that a child which closes stdout
+    and then hangs is killed promptly and its concurrency permit handed back.
+    On Windows that branch cannot fire, because the EOF that triggers it
+    never arrives. The run is still BOUNDED — `wait_for(reader,
+    timeout=timeout_sec)` above it is what "a run always reaches a terminal
+    state" actually rests on — but the bound is the run timeout, six hours by
+    default, instead of the grace period. So the invariant holds and the
+    promptness does not: a misbehaving child holds its permit far longer here
+    than on macOS.
+
+    Probed in a child interpreter rather than assumed from `sys.platform`,
+    and rather than run inline — these tests are async, so there is already a
+    loop running and `asyncio.run` would refuse. If a future Python or
+    proactor loop starts delivering the EOF, these tests resume on their own
+    instead of staying skipped on a stale belief.
+    """
     try:
-        os.kill(pid, 0)
-    except (ProcessLookupError, PermissionError):
-        return False
-    return True
+        done = subprocess.run([sys.executable, "-c", _EOF_PROBE],
+                              capture_output=True, timeout=60)
+    except (OSError, subprocess.SubprocessError):    # pragma: no cover
+        return True                                  # do not skip on a broken probe
+    return done.returncode == 0
 
 
+_needs_eof_on_close = pytest.mark.skipif(
+    not _eof_arrives_when_a_child_closes_stdout(),
+    reason="this platform delivers no EOF when a child closes stdout, so the "
+           "post-EOF grace cannot fire; the run timeout is what bounds it")
+
+
+@_needs_eof_on_close
 @pytest.mark.asyncio
 async def test_child_that_closes_stdout_and_hangs_reaches_terminal(env, tmp_path):
     """EOF on stdout must not mean an unbounded wait. The driver gets a grace
@@ -982,6 +1057,7 @@ async def test_child_that_closes_stdout_and_hangs_reaches_terminal(env, tmp_path
     assert not _alive(pid), "the hung child was left running"
 
 
+@_needs_eof_on_close
 @pytest.mark.asyncio
 async def test_post_eof_hang_does_not_leak_the_concurrency_permit(env, tmp_path):
     """One hung child must not permanently shrink capacity."""

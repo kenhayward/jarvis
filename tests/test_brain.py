@@ -50,7 +50,7 @@ def test_command_has_exact_flags(tmp_path):
     assert "--strict-mcp-config" in cmd
     assert "--dangerously-skip-permissions" in cmd
     assert '"crossSessionInbound": "accept"' in cmd[cmd.index("--settings") + 1].replace('":"', '": "')
-    assert cmd[cmd.index("--tools") + 1] == (                     # an allowlist, not a denylist
+    pinned = (                                                    # an allowlist, not a denylist
         "mcp__jarvis__list_sessions,mcp__jarvis__session_detail,"
         "mcp__jarvis__steer_session,mcp__jarvis__answer_dialog,"
         "mcp__jarvis__spawn_run,"
@@ -73,7 +73,18 @@ def test_command_has_exact_flags(tmp_path):
         # The CLI's own two, and the only built-ins here: without them JARVIS
         # can read a page he was given the address of and find nothing.
         "WebSearch,WebFetch")
-    assert cmd[cmd.index("--tools") + 1] == ",".join(brain.ALLOWED_TOOLS), (
+    # Two different statements, and keeping them apart is the point.
+    #
+    # The COMMAND carries what this machine can carry out, which is
+    # `granted_tools` — ALLOWED_TOOLS minus whatever the platform withdraws.
+    # Identical on macOS, four names short on Windows. (Not `filter_tools`:
+    # that matches on bare tool names, while these carry the mcp__jarvis__
+    # prefix, so it would filter nothing and quietly assert nothing.)
+    assert cmd[cmd.index("--tools") + 1] == ",".join(brain.granted_tools([]))
+    # The PIN is ALLOWED_TOOLS itself — what JARVIS offers, which does not
+    # change with the machine. That literal is the whole point of this test
+    # and is asserted whole, on every platform.
+    assert pinned.split(",") == list(brain.ALLOWED_TOOLS), (
         "the pin above IS ALLOWED_TOOLS — a name that appears in one and not "
         "the other means the list this test guards is no longer the list the "
         "brain is launched with")
@@ -405,11 +416,15 @@ async def test_launch_prompt_names_the_generation_being_started(tmp_path, monkey
 
 
 def _alive(pid: int) -> bool:
-    try:
-        os.kill(pid, 0)
-        return True
-    except ProcessLookupError:
-        return False
+    """Is that process still there — without touching it.
+
+    See the twin of this in tests/test_run_executor.py: `os.kill(pid, 0)`
+    is not a probe on Windows, it is a kill, because Python routes every
+    signal but the CTRL events to TerminateProcess there. `pid_alive` is
+    the repo's own probe and never touches the process on either platform.
+    """
+    import session_watch
+    return session_watch.pid_alive(pid)
 
 
 @pytest.mark.asyncio
