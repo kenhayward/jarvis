@@ -142,7 +142,16 @@ the commit why the alternative was worse.
   configured voice is actually installed, or the Fish key), cross-session
   steering
 - `claude_env.py` — The environment every spawned Claude Code child gets,
-  including the `ANTHROPIC_*` scrub
+  including the `ANTHROPIC_*` scrub, and `split_command` for the configured
+  `claude` path (POSIX splitting destroys a Windows one)
+- `jarvis_platform/` — What this machine can do, stated once. `base.py` holds
+  the capability constants and `TOOL_CAPABILITIES` (tool name -> capability);
+  `macos.py` declares all of them, so on a Mac this layer is invisible.
+  Four consumers read it and they must not disagree: the `/internal/tool`
+  dispatch gate, `brain.granted_tools`, the `JARVIS_DISABLED_TOOLS` env block
+  in `_write_mcp_config`, and `preflight`'s `_CHECK_CAPABILITIES`. **Not**
+  named `platform/` — that would shadow the stdlib module for the whole
+  process, since `server.py` runs from the repository root
 - `actions.py` — System actions (Terminal, Chrome) via AppleScript
 - `browser.py` — Playwright. Only the headless half is live (`read_page`,
   `capture_page`, behind `read_page` / `look_at_page`); the headful
@@ -333,6 +342,13 @@ gh pr create --repo kenhayward/jarvis --base main
   tag machinery is gone in full, including the last handler (`_execute_browse`),
   which lost its caller with the voice dispatch chain
 - AppleScript for Terminal and Chrome control (no OAuth needed)
+- A platform that cannot do something **withdraws the tool, it never fakes
+  it**. A tool that always answers "not supported here" is described to the
+  brain every turn at ~250 tokens, invites an attempt, and gives it something
+  to apologise for; a tool the brain never sees costs nothing. Portable is the
+  default — a tool is only platform-bound if it is listed in
+  `jarvis_platform.base.TOOL_CAPABILITIES`, so forgetting to list one leaves
+  it working everywhere rather than silently dead where nobody tested
 - SQLite for runs, run events and usage (`run_store.py`, `usage_store.py`);
   long-term memory is plain Markdown files instead (`jarvis_memory.py`) —
   the user edits it directly, so it is never a database

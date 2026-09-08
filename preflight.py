@@ -39,6 +39,7 @@ from typing import Optional
 
 import claude_env
 import data_paths
+import jarvis_platform
 import screen
 import tts
 
@@ -720,6 +721,28 @@ _ASYNC_CHECKS = (_check_claude_cli, _check_claude_login, _check_accessibility,
 _SYNC_CHECKS = (_check_anthropic_key_leftover_sync,
                 _check_cross_session_inbound_sync, _check_screen_recording_sync)
 
+# Checks that only mean anything where the capability exists.
+#
+# Accessibility and Screen Recording are macOS TCC concepts. On a platform
+# that does not offer the capability at all, asking about its permission is
+# not a warning, it is a category error -- and a check that reports WARN
+# forever on a machine where nothing is wrong is how a preflight teaches
+# people to ignore it. The same lesson `_check_voice` already learned when
+# "no FISH_API_KEY" stopped meaning "no voice".
+#
+# A check absent from this mapping is unconditional. That is the safe
+# default: forgetting to list one costs a check that runs where it did not
+# need to, never a check silently skipped where it mattered.
+_CHECK_CAPABILITIES = {
+    _check_accessibility: jarvis_platform.CAP_DIALOG_KEY,
+    _check_screen_recording_sync: jarvis_platform.CAP_SCREEN_CAPTURE,
+}
+
+
+def _applies_here(fn) -> bool:
+    needed = _CHECK_CAPABILITIES.get(fn)
+    return needed is None or jarvis_platform.can(needed)
+
 
 async def _run_one(fn, *, is_async: bool, timeout: float) -> Check:
     """Run one check, bounded by `timeout`, and never let it raise or hang.
@@ -752,8 +775,10 @@ async def run_checks(*, timeout: float = DEFAULT_CHECK_TIMEOUT) -> list[Check]:
     Never raises. Safe to call at startup: the worst case is a handful of
     `warn` results after `timeout` seconds, not a hung or crashed server.
     """
-    tasks = [_run_one(fn, is_async=True, timeout=timeout) for fn in _ASYNC_CHECKS]
-    tasks += [_run_one(fn, is_async=False, timeout=timeout) for fn in _SYNC_CHECKS]
+    tasks = [_run_one(fn, is_async=True, timeout=timeout)
+             for fn in _ASYNC_CHECKS if _applies_here(fn)]
+    tasks += [_run_one(fn, is_async=False, timeout=timeout)
+              for fn in _SYNC_CHECKS if _applies_here(fn)]
     return await asyncio.gather(*tasks)
 
 
