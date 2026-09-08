@@ -1,5 +1,7 @@
 import json
 import os
+import subprocess
+import sys
 import pytest
 from pathlib import Path
 
@@ -63,6 +65,33 @@ def test_pid_alive_distinguishes_this_process_from_a_dead_one(tmp_path):
     assert sw.pid_alive(999999) is False
     assert sw.pid_alive(None) is False
     assert sw.pid_alive(0) is False
+    assert sw.pid_alive(-os.getpid()) is False
+    assert sw.pid_alive("not-a-pid") is False
+
+
+def test_pid_alive_leaves_the_process_it_probes_running():
+    """The probe must not be the thing that kills the session.
+
+    On Windows `os.kill(pid, 0)` is not a probe: CPython maps every signal
+    but the two console events to `TerminateProcess(handle, sig)`, so the
+    old implementation terminated each Claude Code session it checked, once
+    per poll of the watcher. This runs on both platforms because the
+    property is the same on both — asking must cost the target nothing.
+    """
+    child = subprocess.Popen(
+        [sys.executable, "-c", "import time; time.sleep(30)"],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        for _ in range(5):
+            assert sw.pid_alive(child.pid) is True
+        # Still running after all that asking, and not merely reported so.
+        assert child.poll() is None
+    finally:
+        child.kill()
+        child.wait(timeout=10)
+
+    # And once it really is gone, the answer flips.
+    assert sw.pid_alive(child.pid) is False
 
 
 def test_encode_cwd_replaces_every_non_alphanumeric_including_dots(tmp_path):
