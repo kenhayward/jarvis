@@ -713,15 +713,23 @@ class _FakeSpeech:
 @pytest.fixture
 def terminal(monkeypatch):
     """No test may open a real Terminal window. Patched on the launcher
-    MODULE object, so a server reload cannot hand the real one back."""
-    from jarvis_platform.macos import launcher
+    MODULE object, so a server reload cannot hand the real one back.
+
+    Every implementation, not just this platform's: naming the macOS module
+    alone left this inert on Windows, where `current()` is `WINDOWS`, and a
+    real `cmd.exe` window opened running `npm` in a pytest tmp directory
+    (observed 2026-09-08). See the same reasoning in `tests/conftest.py`.
+    """
+    from jarvis_platform.macos import launcher as macos_launcher
+    from jarvis_platform.windows import launcher as windows_launcher
     opened: list[str] = []
 
     async def fake_terminal(*, cwd="", command=""):
         opened.append({"cwd": cwd, "command": command})
         return {"success": True, "confirmation": "Terminal is open, sir."}
 
-    monkeypatch.setattr(launcher, "terminal", fake_terminal)
+    for module in (macos_launcher, windows_launcher):
+        monkeypatch.setattr(module, "terminal", fake_terminal)
     return opened
 
 
