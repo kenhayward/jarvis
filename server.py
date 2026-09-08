@@ -95,9 +95,14 @@ log = logging.getLogger("jarvis")
 # Config
 # ---------------------------------------------------------------------------
 
+# The voice. `tts.py` resolves the backend itself (JARVIS_TTS_BACKEND, `say`
+# by default) so nothing here has to be passed down; these are read only to
+# report what is configured on /api/settings/status. The Fish credentials stay
+# because Fish is still a backend — it is simply no longer the only one, and
+# no longer required for JARVIS to speak at all.
 FISH_API_KEY = os.getenv("FISH_API_KEY", "")
 FISH_VOICE_ID = os.getenv("FISH_VOICE_ID", "612b878b113047d9a770c069c8b4fdfe")  # JARVIS (MCU)
-FISH_API_URL = "https://api.fish.audio/v1/tts"
+FISH_API_URL = tts.FISH_TTS_URL
 USER_NAME = os.getenv("USER_NAME", "sir")
 _SKIP_PERMISSIONS = os.getenv("JARVIS_SKIP_PERMISSIONS", "true").lower() not in ("0", "false", "no")
 
@@ -457,39 +462,25 @@ _last_greeting_time: float = 0
 
 
 # ---------------------------------------------------------------------------
-# TTS (Fish Audio)
+# TTS
 # ---------------------------------------------------------------------------
 
 async def synthesize_speech(text: str) -> Optional[bytes]:
-    """Generate speech audio from text using Fish Audio TTS."""
-    if not FISH_API_KEY:
-        log.warning("FISH_API_KEY not set, skipping TTS")
-        return None
+    """One-off synthesis for `/api/tts-test`, through the same backend the
+    mouth uses.
 
-    try:
-        async with httpx.AsyncClient(timeout=15.0) as http:
-            response = await http.post(
-                FISH_API_URL,
-                headers={
-                    "Authorization": f"Bearer {FISH_API_KEY}",
-                    "Content-Type": "application/json",
-                },
-                json={
-                    "text": text,
-                    "reference_id": FISH_VOICE_ID,
-                    "format": "mp3",
-                },
-            )
-            if response.status_code == 200:
-                _session_tokens["tts_calls"] += 1
-                _append_usage_entry(0, 0, "tts")
-                return response.content
-            else:
-                log.error(f"TTS error: {response.status_code}")
-                return None
-    except Exception as e:
-        log.error(f"TTS error: {e}")
+    This used to be a second, hand-rolled Fish Audio request living beside
+    `tts.py`'s — so the debug clip could come back from a different voice,
+    a different format, or (once the local backend landed) a different
+    backend entirely than anything JARVIS actually speaks with. Testing audio
+    that is not the audio under test is worse than not testing it.
+    """
+    r = await tts.synthesize_chunk(text, api_key=FISH_API_KEY, voice_id=FISH_VOICE_ID)
+    if r is None:
         return None
+    _session_tokens["tts_calls"] += 1
+    _append_usage_entry(0, 0, "tts")
+    return r.audio
 
 
 # ---------------------------------------------------------------------------
@@ -1856,9 +1847,10 @@ async def health():
 async def tts_test():
     """Generate a test audio clip for debugging.
 
-    A POST, not a GET, because it spends the user's Fish Audio quota — and a
-    GET is the one method OriginGuard cannot cover, so as a GET this was an
-    <img> tag on any page the user visited, in a loop.
+    A POST, not a GET, because it spends something — a hosted backend's quota,
+    or a local `say` process per call — and a GET is the one method OriginGuard
+    cannot cover, so as a GET this was an <img> tag on any page the user
+    visited, in a loop.
     """
     audio = await synthesize_speech("Testing audio, sir.")
     if audio:
@@ -6856,7 +6848,7 @@ async def api_test_fish(body: KeyTest):
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
             resp = await client.post(
-                "https://api.fish.audio/v1/tts",
+                FISH_API_URL,
                 headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
                 json={"text": "test", "reference_id": FISH_VOICE_ID},
             )
@@ -6878,6 +6870,8 @@ async def api_settings_status():
         "claude_code_installed": claude_installed,
         "server_port": 8340,
         "uptime_seconds": int(time.time() - _session_start),
+        "tts_backend": tts.resolve_backend(),
+        "tts_voice": tts.resolve_voice(),
         "env_keys_set": {
             "fish_audio": bool(env_dict.get("FISH_API_KEY", "").strip() and env_dict.get("FISH_API_KEY", "") != "your-fish-audio-api-key-here"),
             "fish_voice_id": bool(env_dict.get("FISH_VOICE_ID", "").strip()),

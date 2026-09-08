@@ -13,6 +13,8 @@ interface StatusResponse {
   claude_code_installed: boolean;
   server_port: number;
   uptime_seconds: number;
+  tts_backend: string;
+  tts_voice: string;
   env_keys_set: {
     fish_audio: boolean;
     fish_voice_id: boolean;
@@ -91,6 +93,8 @@ function buildPanelHTML(): string {
               <button class="settings-btn" id="btn-save-voice-id">Save</button>
             </div>
           </div>
+
+          <p class="settings-voice-note" id="tts-voice-note"></p>
 
           <div class="settings-actions">
             <button class="settings-btn primary" id="btn-save-keys">Save Keys</button>
@@ -188,8 +192,20 @@ async function loadStatus() {
     const serverDetail = document.getElementById("status-server-detail");
     if (serverDetail) serverDetail.textContent = `port ${status.server_port} | up ${formatUptime(status.uptime_seconds)}`;
 
-    // API key status dots
-    setDotStatus("status-fish", status.env_keys_set.fish_audio ? "green" : "red");
+    // The Fish key is only a problem when Fish is the voice in use. On the
+    // local backend a missing key is not a fault to report red — it is a key
+    // nothing reads, so the honest dot is the absence of a reading.
+    const fishInUse = status.tts_backend === "fish";
+    setDotStatus("status-fish",
+      status.env_keys_set.fish_audio ? "green" : fishInUse ? "red" : "off");
+
+    const voiceNote = document.getElementById("tts-voice-note");
+    if (voiceNote) {
+      voiceNote.textContent = fishInUse
+        ? "Speaking through Fish Audio; the key above is required."
+        : `Speaking locally through macOS \`say\` (${status.tts_voice}) — no key needed. `
+          + "The key above is read only with JARVIS_TTS_BACKEND=fish in .env.";
+    }
 
     // System info
     const portEl = document.getElementById("sysinfo-port");
@@ -207,6 +223,8 @@ async function loadStatus() {
     setDotStatus("status-server", "red");
     setDotStatus("status-claude-cli", "off");
     setDotStatus("status-fish", "off");
+    const voiceNote = document.getElementById("tts-voice-note");
+    if (voiceNote) voiceNote.textContent = "";
     const serverDetail = document.getElementById("status-server-detail");
     if (serverDetail) serverDetail.textContent = "no answer from the server";
     for (const id of ["sysinfo-port", "sysinfo-uptime"]) {
@@ -363,8 +381,11 @@ export async function openSettings() {
   const status = await loadStatus();
   await loadPreferences();
 
-  // Check for first-time setup
-  if (status && !status.env_keys_set.fish_audio) {
+  // Check for first-time setup. A missing Fish key only means "not set up"
+  // when Fish is the backend; the local voice needs nothing entered here, and
+  // greeting that user with a setup wizard asks them for a key they will
+  // never use.
+  if (status && status.tts_backend === "fish" && !status.env_keys_set.fish_audio) {
     enterSetupMode();
   }
 }

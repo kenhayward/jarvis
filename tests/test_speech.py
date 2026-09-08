@@ -1188,6 +1188,47 @@ def test_mp3_seconds_reads_the_frame_header_and_nothing_else():
     assert speech.ack_floor_seconds(_mp3(100.0)) == speech.ACK_FLOOR_MAX_SEC
 
 
+def _wav(seconds: float, rate: int = 22050, *, padding: bool = True,
+         lying_size: int | None = None) -> bytes:
+    """A RIFF/WAVE blob of the given length, shaped like `say`'s output:
+    mono 16-bit PCM with a FLLR padding chunk between `fmt ` and `data`.
+    `lying_size` writes a data size that does not match the bytes present,
+    which is what a writer that never seeked back leaves behind."""
+    import struct
+    body = bytes(int(seconds * rate) * 2)
+    fmt = struct.pack("<HHIIHH", 1, 1, rate, rate * 2, 2, 16)
+    chunks = b"fmt " + struct.pack("<I", len(fmt)) + fmt
+    if padding:
+        chunks += b"FLLR" + struct.pack("<I", 64) + bytes(64)
+    size = len(body) if lying_size is None else lying_size
+    chunks += b"data" + struct.pack("<I", size) + body
+    return b"RIFF" + struct.pack("<I", 4 + len(chunks)) + b"WAVE" + chunks
+
+
+def test_wav_seconds_reads_the_riff_header_past_say_s_padding():
+    import speech
+    assert abs(speech.wav_seconds(_wav(2.0)) - 2.0) < 0.01
+    assert abs(speech.wav_seconds(_wav(0.5, rate=44100)) - 0.5) < 0.01
+    assert abs(speech.wav_seconds(_wav(1.0, padding=False)) - 1.0) < 0.01
+    assert speech.wav_seconds(b"RIFF") == 0.0, "a truncated header has no floor"
+    assert speech.wav_seconds(b"A:Alpha one.") == 0.0
+    assert speech.wav_seconds(b"") == 0.0 and speech.wav_seconds(None) == 0.0
+    # A header the writer never went back to fix: the bytes in hand win, so
+    # the floor is real audio rather than a claim about audio.
+    assert abs(speech.wav_seconds(_wav(1.0, lying_size=0)) - 1.0) < 0.01
+    assert abs(speech.wav_seconds(_wav(1.0, lying_size=10 ** 9)) - 1.0) < 0.01
+
+
+def test_audio_seconds_picks_the_parser_by_container():
+    import speech
+    assert abs(speech.audio_seconds(_wav(2.0)) - 2.0) < 0.01
+    assert abs(speech.audio_seconds(_mp3(2.0)) - 2.0) < 0.01
+    assert speech.audio_seconds(b"A:Alpha one.") == 0.0, "a fake still has no floor"
+    # The local backend's chunks must reach the resume guard with a floor --
+    # without wav_seconds every one of them was a blob worth 0.0 seconds.
+    assert speech.ack_floor_seconds(_wav(2.0)) > 0
+
+
 @pytest.mark.asyncio
 async def test_the_watermark_cannot_be_walked_faster_than_the_audio_plays(h):
     s = h.sched

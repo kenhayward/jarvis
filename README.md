@@ -76,11 +76,18 @@ limit.](docs/images/dashboard-usage.png)
 *So the number that matters is not a dollar figure — it is how much of your
 subscription's two windows is gone. Fictional sample data.*
 
-**The one thing you pay for is [Fish Audio](https://fish.audio/)**, which
-gives JARVIS his voice. Be aware there is no fallback: `tts.py` returns
-nothing without `FISH_API_KEY`, so JARVIS goes silent and his replies appear
-as text in the browser instead. If you would rather use a different TTS, that
-is a small, well-isolated file to replace — see *Make it yours* below.
+**And the voice is free too.** JARVIS speaks through macOS's own `say` —
+offline, no key, no account. Measured on an M-series Mac with the en_GB voice
+Daniel: about 0.45s per sentence whatever its length, against 1.2-3.5s of
+audio, so he stays ahead of his own mouth. System Settings -> Accessibility ->
+Spoken Content -> Manage Voices has a free "Daniel (Premium)" download that
+the same setting picks up.
+
+If you would rather have a cloned or hosted voice, [Fish
+Audio](https://fish.audio/) is still built in — set `FISH_API_KEY` and
+`JARVIS_TTS_BACKEND=fish`. That key is read *only* when you ask for it, so one
+left in `.env` from an earlier setup cannot quietly start billing. Either way
+it is one small, well-isolated file to replace — see *Make it yours* below.
 
 ## What he does
 
@@ -148,7 +155,8 @@ stuck is the CLI's own words, not a guess. Fictional sample data.*
   @anthropic-ai/claude-code` (2.1.224 or newer), then run `claude` once and
   log in. This is what JARVIS runs on.
 - **Python 3.11+** and **Node.js 18+**.
-- **A Fish Audio API key.** Required; there is no fallback voice.
+- **Nothing else.** The voice is local (macOS `say`); a Fish Audio key is
+  optional, and only read with `JARVIS_TTS_BACKEND=fish`.
 
 ## Setup
 
@@ -164,14 +172,14 @@ python -m playwright install chromium    # for read_page / look_at_page
 cd frontend && npm install && cd ..
 ```
 
-**Fill in the `.env`.** `.env.example` documents the lot; the short version is
-one required key and three optional ones:
+**Fill in the `.env`.** `.env.example` documents the lot, and nothing in it is
+required — a copied `.env.example` already works:
 
 ```env
-FISH_API_KEY=...            # required, no fallback
+# JARVIS_TTS_VOICE=Daniel   # optional: any voice `say -v '?'` lists
 # JARVIS_BRAIN_MODEL=sonnet # optional: the brain's model
-# FISH_VOICE_ID=...         # optional: a different voice
 # USER_NAME=Tony            # optional: what he calls you
+# JARVIS_TTS_BACKEND=fish   # optional: the hosted voice, with FISH_API_KEY
 ```
 
 **Generate the certificates.** These are not optional:
@@ -277,7 +285,7 @@ Microphone → Chrome Web Speech API → WebSocket → FastAPI (server.py)
                                                       │
                     ┌─────────────────────────────────┼──────────────────────────────┐
                     ▼                                 ▼                              ▼
-        speech.py → Fish Audio → speaker    MCP tools (jarvis_mcp.py       session_watch.py
+        speech.py → tts.py → speaker         MCP tools (jarvis_mcp.py       session_watch.py
                                              → POST /internal/tool)     (every Claude Code
                                                       │                  session on the machine)
                                                       ▼
@@ -315,9 +323,9 @@ invariants hold throughout it:
 |-------|-----------|
 | Backend | FastAPI + Python (`server.py`) |
 | Frontend | Vite + TypeScript + Three.js (voice UI), vanilla TS (dashboard) |
-| Communication | WebSocket — JSON messages, base64 MP3 audio |
+| Communication | WebSocket — JSON messages, base64 audio (WAV locally, MP3 from Fish) |
 | Brain | One long-lived `claude -p` process, Sonnet by default, on your subscription |
-| Voice | Fish Audio, one request per sentence |
+| Voice | macOS `say` by default, Fish Audio on request; one call per sentence |
 | System | AppleScript — Terminal, Chrome, notifications, screenshots |
 | Storage | SQLite for runs and usage; plain Markdown for memory |
 
@@ -330,7 +338,7 @@ invariants hold throughout it:
 | `claude_env.py` | The environment every spawned child gets, including the `ANTHROPIC_*` scrub |
 | `jarvis_mcp.py` | Stdio MCP server exposing JARVIS's tools to the brain |
 | `speech.py` | Sentence splitting, echo rejection, barge-in, and the queue of everything JARVIS says |
-| `tts.py` | Fish Audio synthesis — the whole voice, in one small file |
+| `tts.py` | Synthesis, both backends — the whole voice, in one small file |
 | `builds.py` | Spec, brief and plan: the pipeline behind a real multi-hour build |
 | `specs.py` | The review surface — reading a design back by numbered section, and approving it |
 | `run_store.py` | SQLite `runs` / `run_events`, and the six-value status enum |
@@ -341,7 +349,7 @@ invariants hold throughout it:
 | `dialog.py` | Presses one key in the Terminal tab that owns a session |
 | `jarvis_memory.py` | Memory as a folder of Markdown files, not a database |
 | `jarvis_home/CLAUDE.md` | JARVIS's persona and rules — the file to edit to change who he is |
-| `preflight.py` | First-run checks: CLI version, login, Accessibility, Fish key |
+| `preflight.py` | First-run checks: CLI version, login, Accessibility, the voice |
 | `data_paths.py` | The single source of truth for where JARVIS writes |
 | `frontend/src/voice.ts` | Web Speech API, audio playback |
 | `frontend/src/orb.ts` | The Three.js particle orb |
@@ -467,8 +475,8 @@ visit [ethanplus.ai](https://ethanplus.ai) for inquiries. See
 ## Credits
 
 Built by [Ethan](https://ethanplus.ai). Runs on
-[Claude Code](https://claude.com/claude-code) and
-[Fish Audio](https://fish.audio).
+[Claude Code](https://claude.com/claude-code), and on
+[Fish Audio](https://fish.audio) when you ask it to.
 
 Inspired by the AI that started it all — Tony Stark's JARVIS.
 

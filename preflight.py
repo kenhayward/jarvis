@@ -39,6 +39,7 @@ from typing import Optional
 
 import claude_env
 import screen
+import tts
 
 log = logging.getLogger("jarvis.preflight")
 
@@ -439,15 +440,78 @@ def _check_screen_recording_sync() -> Check:
     )
 
 
-def _check_fish_api_key_sync() -> Check:
-    """FISH_API_KEY must be set or JARVIS has no voice."""
-    if os.environ.get("FISH_API_KEY"):
-        return Check(name="fish_api_key", status=STATUS_OK, message="FISH_API_KEY is set.")
+# One line of `say -v '?'` is the voice name, its language tag, then a sample
+# sentence: "Daniel<pad>en_GB    # Hello! My name is Daniel." The name column
+# is PADDED, not delimited -- a long name ("Reed (English (UK))") leaves a
+# single space before the tag, so splitting on runs of whitespace loses
+# exactly the voices whose names contain spaces. The tag is the anchor.
+# The region subtag is not always letters: macOS ships "Majed  ar_001".
+_SAY_VOICE_LINE = re.compile(r"^(.+?)\s+[A-Za-z]{2,3}(?:[-_][A-Za-z0-9]+)*\s+#")
+
+
+def _say_voice_names(listing: str) -> set[str]:
+    names = set()
+    for line in listing.splitlines():
+        m = _SAY_VOICE_LINE.match(line.strip())
+        if m:
+            names.add(m.group(1).strip())
+    return names
+
+
+async def _check_voice(timeout: float = DEFAULT_CHECK_TIMEOUT) -> Check:
+    """JARVIS must have a voice: a working local synthesiser, or a Fish key.
+
+    Backend-aware, because "no FISH_API_KEY" stopped meaning "no voice" when
+    `say` became the default — reporting a missing key as a failure on a
+    machine that speaks perfectly well is how a preflight teaches people to
+    ignore it.
+
+    The voice NAME is checked, not just the binary, because `say -v Bogus`
+    exits 0 and quietly synthesises with the system default (measured): a
+    typo in JARVIS_TTS_VOICE costs you the British butler and says nothing.
+    That is a warn — he still speaks — where a missing `say` is a fail.
+    """
+    backend = tts.resolve_backend()
+
+    if backend == tts.BACKEND_FISH:
+        if os.environ.get("FISH_API_KEY"):
+            return Check(name="voice", status=STATUS_OK,
+                         message="Fish Audio backend, FISH_API_KEY is set.")
+        return Check(
+            name="voice",
+            status=STATUS_FAIL,
+            message="JARVIS_TTS_BACKEND=fish but FISH_API_KEY is not set.",
+            remedy=("Get a Fish Audio API key from fish.audio and set FISH_API_KEY "
+                    "in .env, or drop JARVIS_TTS_BACKEND to use the local macOS voice."),
+        )
+
+    if shutil.which("say") is None:
+        return Check(
+            name="voice",
+            status=STATUS_FAIL,
+            message="The local TTS backend needs `say`, which is not on PATH.",
+            remedy=("`say` ships with macOS; on anything else set FISH_API_KEY and "
+                    "JARVIS_TTS_BACKEND=fish in .env."),
+        )
+
+    wanted = tts.resolve_voice()
+    rc, stdout, stderr = await _run_subprocess("say", "-v", "?", timeout=timeout)
+    if rc != 0:
+        return Check(name="voice", status=STATUS_WARN,
+                     message=f"Could not list `say` voices: {(stderr or stdout).strip() or f'exit {rc}'}",
+                     remedy="Run `say -v '?'` yourself to see which voices are installed.")
+
+    installed = _say_voice_names(stdout)
+    if wanted in installed:
+        return Check(name="voice", status=STATUS_OK,
+                     message=f"Local `say` backend, voice {wanted!r}.")
     return Check(
-        name="fish_api_key",
-        status=STATUS_FAIL,
-        message="FISH_API_KEY is not set.",
-        remedy="Get a Fish Audio API key from fish.audio and set FISH_API_KEY in .env.",
+        name="voice",
+        status=STATUS_WARN,
+        message=f"Voice {wanted!r} is not installed; `say` will use the system default.",
+        remedy=("Pick an installed voice for JARVIS_TTS_VOICE (`say -v '?'` lists them), "
+                "or add one under System Settings -> Accessibility -> Spoken Content -> "
+                "System Voice -> Manage Voices."),
     )
 
 
@@ -626,8 +690,9 @@ def enable_cross_session_inbound() -> tuple[bool, str]:
 
 # ── running them all ─────────────────────────────────────────────────────
 
-_ASYNC_CHECKS = (_check_claude_cli, _check_claude_login, _check_accessibility)
-_SYNC_CHECKS = (_check_fish_api_key_sync, _check_anthropic_key_leftover_sync,
+_ASYNC_CHECKS = (_check_claude_cli, _check_claude_login, _check_accessibility,
+                 _check_voice)
+_SYNC_CHECKS = (_check_anthropic_key_leftover_sync,
                 _check_cross_session_inbound_sync, _check_screen_recording_sync)
 
 
@@ -693,8 +758,14 @@ def _phrase_for(check: Check) -> str:
         if "not been granted" in msg:
             return "I don't have Screen Recording permission"
         return "Screen Recording couldn't be checked"
-    if name == "fish_api_key":
-        return "I have no Fish Audio key"
+    if name == "voice":
+        if "FISH_API_KEY" in msg:
+            return "I have no Fish Audio key"
+        if "not on PATH" in msg:
+            return "I have no voice on this machine"
+        if "not installed" in msg:
+            return "my voice isn't installed"
+        return "my voice couldn't be checked"
     if name == "anthropic_key_leftover":
         return "there's a leftover Anthropic API key in the environment"
     if name == "cross_session_inbound":
