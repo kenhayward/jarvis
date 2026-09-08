@@ -40,7 +40,6 @@ from typing import Optional
 import claude_env
 import data_paths
 import jarvis_platform
-import screen
 import tts
 
 log = logging.getLogger("jarvis.preflight")
@@ -407,7 +406,7 @@ def _check_screen_recording_sync() -> Check:
     The same lesson as Accessibility one permission along, and worse in one
     respect: Accessibility fails loudly (AppleScript error -1728), while a
     `screencapture` without Screen Recording exits 0 and hands back a black
-    or desktop-only frame. `screen.capture_screen` refuses such a frame at
+    or desktop-only frame. The screen module refuses such a frame at
     the moment of asking; this says it at startup, before the user has spoken.
 
     It asks CoreGraphics (`CGPreflightScreenCaptureAccess`, the non-prompting
@@ -415,7 +414,7 @@ def _check_screen_recording_sync() -> Check:
     not ask for, at every boot, is precisely what this capability must not do.
     """
     try:
-        granted = screen.screen_recording_granted()
+        granted = jarvis_platform.current().screen.permission_granted()
     except Exception as e:  # the module must never take startup down
         return Check(name="screen_recording", status=STATUS_WARN,
                      message=f"Could not determine Screen Recording status: {e}")

@@ -49,10 +49,11 @@ import shutil
 import struct
 import sys
 import tempfile
-from dataclasses import dataclass
 from pathlib import Path
 
-log = logging.getLogger("jarvis.screen")
+from ..base import Screen, ScreenError, Shot, Window  # noqa: F401
+
+log = logging.getLogger("jarvis.platform.screen")
 
 # Each of these must finish WELL inside `jarvis_mcp.TIMEOUT_SEC` (20s), and
 # the caller puts its own hard deadline on top: a handler that outlives it
@@ -95,22 +96,10 @@ BLANK_SAMPLE_EDGE = 32
 BLANK_MAD = 1.5
 
 
-class ScreenError(Exception):
-    """Something JARVIS could not see. The message is meant to be spoken."""
-
-
-@dataclass
-class Shot:
-    png: bytes
-    width: int
-    height: int
-
-
-@dataclass
-class Window:
-    app: str
-    title: str
-    frontmost: bool
+# `ScreenError`, `Shot` and `Window` are imported from `jarvis_platform.base`
+# above. They are the protocol's shapes, not this implementation's: callers
+# catch that exception and read those fields regardless of which platform
+# produced them.
 
 
 # ── the one subprocess boundary ────────────────────────────────────────────
@@ -149,7 +138,7 @@ async def _run(*args: str, timeout: float) -> tuple[int, str, str]:
 
 # ── permission ─────────────────────────────────────────────────────────────
 
-def screen_recording_granted() -> bool | None:
+def permission_granted() -> bool | None:
     """True, False, or None when the probe itself could not be run.
 
     `CGPreflightScreenCaptureAccess` is the documented, NON-prompting check —
@@ -273,7 +262,7 @@ async def _frame_is_blank(path: Path, workdir: Path) -> bool:
 
 # ── the picture ────────────────────────────────────────────────────────────
 
-async def capture_screen(display: int | None = None) -> Shot:
+async def capture(display: int | None = None) -> Shot:
     """A PNG of one display, shrunk to `SHOT_MAX_EDGE`.
 
     `display` is a 1-based index as `screencapture -D` counts them; None means
@@ -286,7 +275,7 @@ async def capture_screen(display: int | None = None) -> Shot:
 
     Call this ONLY on a turn the user drove. See the module docstring.
     """
-    if screen_recording_granted() is False:
+    if permission_granted() is False:
         raise ScreenError(_NO_PERMISSION)
 
     workdir = Path(tempfile.mkdtemp(prefix="jarvis-screen-"))
@@ -380,7 +369,7 @@ _ACCESSIBILITY_MARKERS = ("-1728", "-1719", "-25211",
                           "not allowed assistive access")
 
 
-async def list_windows() -> list[Window]:
+async def windows() -> list[Window]:
     """Open windows: app name, window title, and which app is in front.
 
     Raises ScreenError when Accessibility is missing. An empty list would have
@@ -394,16 +383,16 @@ async def list_windows() -> list[Window]:
             raise ScreenError(
                 "I've not been granted Accessibility, sir, so I can't read "
                 "your window titles")
-        log.warning(f"list_windows failed: {stderr.strip()[:200]}")
+        log.warning(f"windows failed: {stderr.strip()[:200]}")
         raise ScreenError("I couldn't read what's open, sir")
 
-    windows: list[Window] = []
+    found: list[Window] = []
     for line in stdout.splitlines():
         parts = line.split("|||")
         if len(parts) < 3:
             continue
-        windows.append(Window(app=parts[0].strip(), title=parts[1].strip(),
+        found.append(Window(app=parts[0].strip(), title=parts[1].strip(),
                               frontmost=parts[2].strip().lower() == "true"))
-        if len(windows) >= MAX_WINDOWS:
+        if len(found) >= MAX_WINDOWS:
             break
-    return windows
+    return found

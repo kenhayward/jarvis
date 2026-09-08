@@ -313,3 +313,44 @@ def test_the_outcome_wire_values_are_unchanged():
     assert (base.SENT, base.NO_TERMINAL, base.NOT_FOUND,
             base.NOT_PERMITTED, base.FAILED, base.BAD_KEY) == \
         ("sent", "no_tty", "not_found", "not_permitted", "failed", "bad_key")
+
+
+def test_the_macos_host_carries_the_real_screen():
+    from jarvis_platform.macos import MACOS, screen
+    assert MACOS.screen is screen
+
+
+def test_every_sub_interface_is_wired_on_the_macos_host():
+    """The four modules that moved. A host missing one silently falls back
+    to a null object that refuses everything, which would look like a
+    permissions problem rather than a wiring mistake."""
+    from jarvis_platform import base
+    from jarvis_platform.macos import MACOS
+    for name, null in (("notifications", base.NO_NOTIFICATIONS),
+                       ("launcher", base.NO_LAUNCHER),
+                       ("dialogs", base.NO_DIALOGS),
+                       ("screen", base.NO_SCREEN)):
+        assert getattr(MACOS, name) is not null, name
+
+
+@pytest.mark.asyncio
+async def test_a_host_without_a_screen_refuses_with_something_speakable():
+    from jarvis_platform import base
+    host = jp.Host(name="plan9", capabilities=frozenset())
+    assert host.screen.permission_granted() is None
+    for call in (host.screen.capture(), host.screen.windows()):
+        with pytest.raises(base.ScreenError) as caught:
+            await call
+        assert str(caught.value).endswith("sir")
+
+
+def test_no_permission_needed_means_granted_not_unknown():
+    """A platform that requires no such permission answers True. None is
+    reserved for "the probe itself could not be run", which is the only
+    case a caller should report as 'could not determine' — otherwise
+    preflight warns forever on a machine where nothing is wrong."""
+    from jarvis_platform.base import Screen
+    assert Screen.permission_granted.__doc__ is not None
+    doc = Screen.permission_granted.__doc__
+    assert "returns True, not None" in doc
+    assert "could not be run" in doc

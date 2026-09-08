@@ -10,13 +10,13 @@ deliberate: the test suite already patches these seams on the module object
 `importlib.reload(server)` several fixtures do cannot hand the real
 implementation back. Keeping them modules keeps that working.
 
-Still to move: `screen.py`.
+All four are here now: notifications, launcher, dialogs, screen.
 """
 
 from __future__ import annotations
 
 from ..base import ALL_CAPABILITIES, Host
-from . import dialogs, launcher, notifications
+from . import dialogs, launcher, notifications, screen
 
 MACOS = Host(
     name="macos",
@@ -24,4 +24,5 @@ MACOS = Host(
     notifications=notifications,
     launcher=launcher,
     dialogs=dialogs,
+    screen=screen,
 )

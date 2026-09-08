@@ -5831,12 +5831,12 @@ ACTING_TOOLS.update({"read_page", "look_at_page"})
 # front and what its windows are called, a few hundred bytes, no pixels at
 # all, and it answers "what am I looking at" outright. `look_at_screen` is a
 # real picture the brain SEES, about 1,200 tokens of context (1280x720 after
-# `sips` shrinks it — see screen.py, where that number is measured).
+# `sips` shrinks it — see the macOS screen module, where it is measured).
 #
 # BOTH are acting tools, and not because they write anything. A screenshot of
 # this user's desk can hold a password, a client's data, a private message. It
 # is taken when HE has just asked and on no other turn: never on a timer,
-# never speculatively, never as ambient context. The original screen.py fed
+# never speculatively, never as ambient context. The original screen module fed
 # `format_windows_for_context()` into every turn, and the always-on context
 # thread that did the same was removed tonight for exactly this reason.
 #
@@ -5846,7 +5846,6 @@ ACTING_TOOLS.update({"read_page", "look_at_page"})
 # surface. Titles go inside `_wrap_untrusted`; the picture carries the same
 # rule in the sentence attached to it.
 
-import screen                                             # noqa: E402
 
 # The whole call must land well inside `jarvis_mcp.TIMEOUT_SEC` (20s): past
 # that the brain is told the server is unreachable while the work carries on
@@ -5861,7 +5860,7 @@ _WINDOWS_WRAP_NAME = "open windows"
 def _screen_refusal(e: Exception, what: str) -> str:
     """A ScreenError's message is already a sentence JARVIS can say. Anything
     else is an internal mess the user must not hear."""
-    if isinstance(e, screen.ScreenError):
+    if isinstance(e, jarvis_platform.base.ScreenError):
         return f"{e}."
     log.warning("%s failed: %s", what, e)
     return "I couldn't see your screen just now, sir."
@@ -5877,7 +5876,8 @@ async def tool_look_at_screen(args: dict):
     if display is not None and display < 1:
         display = None
     try:
-        shot = await asyncio.wait_for(screen.capture_screen(display=display),
+        shot = await asyncio.wait_for(
+            jarvis_platform.current().screen.capture(display=display),
                                       SCREEN_DEADLINE_SEC)
     except asyncio.TimeoutError:
         return "That took too long, sir — I've given up on it."
@@ -5894,7 +5894,8 @@ async def tool_look_at_screen(args: dict):
 async def tool_what_is_on_screen(args: dict) -> str:
     """Which app is in front, and what every open window is called."""
     try:
-        windows = await asyncio.wait_for(screen.list_windows(),
+        windows = await asyncio.wait_for(
+            jarvis_platform.current().screen.windows(),
                                          SCREEN_DEADLINE_SEC)
     except asyncio.TimeoutError:
         return "That took too long, sir — I've given up on it."

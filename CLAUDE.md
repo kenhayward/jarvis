@@ -169,9 +169,13 @@ the commit why the alternative was worse.
   `capture_page`, behind `read_page` / `look_at_page`); the headful
   `JarvisBrowser` search/research class is reachable from nothing but
   `tests/test_browser_integration.py`
-- `screen.py` — Seeing the Mac itself: the window list (`osascript`) and one
-  downscaled `screencapture` the brain sees as an MCP image block. Captured
-  only on a turn the user drove, never persisted, never on a timer
+- `jarvis_platform/macos/screen.py` — Seeing the Mac itself: the window list
+  (`osascript`) and one downscaled `screencapture` the brain sees as an MCP
+  image block. Captured only on a turn the user drove, never persisted,
+  never on a timer — those are protocol rules, stated on `base.Screen` and
+  binding on every implementation. `permission_granted()` returns True on a
+  platform that needs no such permission; None means only that the probe
+  could not run. Was `screen.py`
 - `repo_read.py` — Cheap, model-free reading of a repository (no `claude`
   subprocess)
 - `project_maker.py` — Creates a new project directory from a spoken name,

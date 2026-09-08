@@ -274,6 +274,91 @@ class _NoDialogs:
 NO_DIALOGS = _NoDialogs()
 
 
+# --- seeing the machine itself ---------------------------------------------
+#
+# A camera pointed at the user's life. A screenshot can hold a password, a
+# private message, a client's data — so the rules that make this acceptable
+# are protocol rules, binding on every implementation:
+#
+#   * Nothing here runs on a timer, speculatively, or as ambient context.
+#     `server.ACTING_TOOLS` gates both tools to a turn the user drove.
+#   * The capture exists on disk only for as long as it takes to shrink it
+#     and read the bytes, and is removed on every path out.
+#   * An implementation refuses rather than handing back something the brain
+#     would describe wrongly. A confident answer about a blank picture is
+#     the worst failure this feature has.
+
+
+class ScreenError(Exception):
+    """Something JARVIS could not see. The message is meant to be spoken."""
+
+
+@dataclass
+class Shot:
+    """One capture, already shrunk to what the brain is shown."""
+    png: bytes
+    width: int
+    height: int
+
+
+@dataclass
+class Window:
+    app: str
+    title: str
+    frontmost: bool
+
+
+class Screen(Protocol):
+    """The machine's own screen, priced in two tiers.
+
+    `windows()` is a few hundred bytes and no pixels; "what am I looking at"
+    is usually answerable from it alone. `capture()` costs roughly 1,200
+    tokens of image on the turn it is used. Callers should reach for the
+    cheap one first — the same split `read_page` and `look_at_page` make for
+    the web.
+    """
+
+    def permission_granted(self) -> bool | None:
+        """Whether capture is permitted, asked WITHOUT prompting for it.
+
+        True when JARVIS may capture — and a platform that requires no such
+        permission returns True, not None, because "nothing stands in the
+        way" is a real answer rather than an unknown one. False when it is
+        refused. None ONLY when the probe itself could not be run, which is
+        the one case a caller should report as "could not determine".
+
+        Must never put a system dialog in front of the user: this is asked
+        at startup and on a tool call, and neither may interrupt.
+        """
+        ...
+
+    async def capture(self, display: int | None = None) -> Shot: ...
+
+    async def windows(self) -> list[Window]: ...
+
+
+class _NoScreen:
+    """A platform whose eyes have not been built.
+
+    Raises ScreenError with a speakable sentence, which is what every caller
+    already handles — `server._screen_refusal` turns it straight into
+    something JARVIS says. Reached only behind a withdrawn
+    CAP_SCREEN_CAPTURE / CAP_WINDOW_LIST.
+    """
+
+    def permission_granted(self) -> bool | None:
+        return None
+
+    async def capture(self, display: int | None = None) -> Shot:
+        raise ScreenError("I can't see this machine's screen, sir")
+
+    async def windows(self) -> list[Window]:
+        raise ScreenError("I can't read what's open on this machine, sir")
+
+
+NO_SCREEN = _NoScreen()
+
+
 @dataclass(frozen=True)
 class Host:
     """One platform, what it can do, and how it does it.
@@ -288,6 +373,7 @@ class Host:
     notifications: Notifications = field(default=NO_NOTIFICATIONS)
     launcher: Launcher = field(default=NO_LAUNCHER)
     dialogs: Dialogs = field(default=NO_DIALOGS)
+    screen: Screen = field(default=NO_SCREEN)
 
     def can(self, capability: str) -> bool:
         return capability in self.capabilities
