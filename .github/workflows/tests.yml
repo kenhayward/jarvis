@@ -1,11 +1,19 @@
 # Run the suite on every push and pull request.
 #
-# macOS, not Ubuntu, on purpose: JARVIS is a macOS-only project, and while
-# every macOS-specific subprocess (osascript, screencapture, sips, claude) is
-# faked at the seam in tests, the environment the suite was written against
-# is a Mac. A green run here means what a green run on the author's machine
-# means. Ubuntu would be cheaper and would also be a second environment
-# nobody develops on.
+# Two platforms, and they are not equals yet.
+#
+# macOS is the gate. JARVIS was written on a Mac, every macOS-specific
+# subprocess (osascript, screencapture, sips, claude) is faked at the seam in
+# tests, and a green run here means what a green run on the author's machine
+# means.
+#
+# Windows is a progress meter, and is allowed to fail on purpose. The port is
+# phased: the platform layer that gives `actions.py`, `screen.py`,
+# `notifier.py` and `dialog.py` a second implementation does not exist yet, so
+# a large number of these tests cannot pass and are not expected to. What this
+# job buys in the meantime is a number that only ever goes down, measured on
+# every commit rather than discovered at the end. When it reaches zero, delete
+# the `continue-on-error` line below and Windows becomes a gate too.
 #
 # The suite needs: Python 3.11+ (the code uses `X | None` at runtime; 3.9,
 # which macOS ships as `python3`, dies at import), Node for the frontend
@@ -22,8 +30,16 @@ on:
 
 jobs:
   pytest:
-    runs-on: macos-latest
+    runs-on: ${{ matrix.os }}
+    # Windows failures do not fail the build — see the header. macOS does.
+    continue-on-error: ${{ matrix.os == 'windows-latest' }}
     timeout-minutes: 25
+
+    strategy:
+      # Windows going red must not cancel the run that actually gates merges.
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
 
     steps:
       - uses: actions/checkout@v4
