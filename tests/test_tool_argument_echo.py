@@ -786,31 +786,11 @@ def test_every_echo_site_is_walled_when_driven(server, payload):
             f"{name} echoed its argument: {out!r}"
 
 
-def _can_name_a_file(name: str) -> bool:
-    """Will this filesystem accept a file with that name at all?
-
-    The attacks below are carried by the NAME: a newline in it forges a line
-    of JARVIS's own speech in a header, a quote closes the untrusted wrapper.
-    Windows refuses both outright — measured, the Win32 layer rejects control
-    characters and `"` in a path component — so the file cannot be created
-    and the test has nothing to attack with.
-
-    Read the skip as a NARROWER threat surface, not an untested one: the wall
-    in `server` is unchanged and is exercised by every other input here. What
-    is missing is only the ability to build these two particular shapes.
-    """
-    import pathlib
-    import tempfile
-    probe = pathlib.Path(tempfile.mkdtemp()) / name
-    try:
-        probe.write_text("x", encoding="utf-8")
-    except OSError:
-        return False
-    return True
+from tests.conftest import can_name_a_file
 
 
 @pytest.mark.skipif(
-    not _can_name_a_file('a\nb') or not _can_name_a_file('a"b'),
+    not can_name_a_file('a\nb') or not can_name_a_file('a"b'),
     reason="this filesystem refuses newlines and quotes in a filename, "
            "so neither hostile name can be built here")
 def test_a_file_the_repository_named_is_not_spoken_raw(server, monkeypatch, tmp_path):

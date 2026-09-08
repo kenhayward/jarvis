@@ -160,6 +160,19 @@ def repo(server, monkeypatch, tmp_path):
     return server, project
 
 
+from tests.conftest import can_name_a_file
+
+# The three tests below attack through a FILENAME or a DIRECTORY name.
+# Windows will not create either shape, so the attack cannot be built --
+# see `can_name_a_file`. A narrower threat surface, not an untested one.
+_needs_hostile_names = pytest.mark.skipif(
+    not can_name_a_file('a' + chr(10) + 'b')
+    or not can_name_a_file('a' + chr(34) + 'b'),
+    reason='this filesystem refuses newlines and quotes in a path '
+           'component, so neither hostile name can be built here')
+
+
+@_needs_hostile_names
 @pytest.mark.asyncio
 async def test_a_hostile_filename_cannot_escape_read_files_block(repo):
     """The reviewer's own path: a real file, on a real disk, with a name
@@ -176,6 +189,7 @@ async def test_a_hostile_filename_cannot_escape_read_files_block(repo):
     assert hostile in out
 
 
+@_needs_hostile_names
 @pytest.mark.asyncio
 async def test_a_hostile_filename_cannot_stand_outside_the_block_either(repo):
     """`read_file` printed the raw relative path in the header line ABOVE the
@@ -192,6 +206,7 @@ async def test_a_hostile_filename_cannot_stand_outside_the_block_either(repo):
     assert "<" not in header and ">" not in header and '"' not in header, header
 
 
+@_needs_hostile_names
 @pytest.mark.asyncio
 async def test_a_hostile_project_name_cannot_write_a_tag(server, monkeypatch,
                                                          tmp_path):

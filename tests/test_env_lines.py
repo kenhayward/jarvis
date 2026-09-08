@@ -80,7 +80,12 @@ def test_the_reader_really_does_split_on_it(env, sep):
     _c, server = env
     path = server._env_file_path()
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(f"USER_NAME=Tony{sep}{PAYLOAD}\n")
+    # encoding, because two of the separators under test are not in cp1252 and
+    # the reader takes UTF-8. newline="" so nothing is translated on the way
+    # out: this test is about which bytes the reader splits on, so the bytes it
+    # writes have to be exactly the ones it named.
+    path.write_text(f"USER_NAME=Tony{sep}{PAYLOAD}\n",
+                    encoding="utf-8", newline="")
     _lines, parsed = server._read_env()
     assert parsed.get("JARVIS_CLAUDE_PATH") == "/tmp/evil", (hex(ord(sep)),
                                                              parsed)

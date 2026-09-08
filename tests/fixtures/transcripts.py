@@ -93,14 +93,14 @@ def write_transcript(root: Path, *, cwd: str, session_id: str,
         lines += noise_lines(session_id)
     for t in turns:
         lines.append(assistant_line(session_id=session_id, cwd=cwd, **t))
-    p.write_text("\n".join(lines) + "\n")
+    p.write_text("\n".join(lines) + "\n", encoding="utf-8", newline="\n")
     return p
 
 
 def append_turns(path: Path, *, session_id: str, cwd: str,
                  turns: list[dict]) -> None:
     """Append to an existing transcript, exactly as the CLI does."""
-    with open(path, "a") as fh:
+    with open(path, "a", encoding="utf-8", newline="\n") as fh:
         for t in turns:
             fh.write(assistant_line(session_id=session_id, cwd=cwd, **t) + "\n")
 
@@ -130,7 +130,7 @@ def write_agent_sidecar(root: Path, *, cwd: str, session_id: str,
             "toolUseId": f"toolu_{agent_id}", "spawnDepth": spawn_depth}
     if parent_agent_id:
         body["parentAgentId"] = parent_agent_id
-    p.write_text(json.dumps(body))
+    p.write_text(json.dumps(body), encoding="utf-8", newline="\n")
     return p
 
 
@@ -151,5 +151,5 @@ def write_agent_transcript(root: Path, *, cwd: str, session_id: str,
     for t in turns:
         lines.append(assistant_line(session_id=session_id, cwd=cwd,
                                     sidechain=True, agent_id=agent_id, **t))
-    p.write_text("\n".join(lines) + "\n")
+    p.write_text("\n".join(lines) + "\n", encoding="utf-8", newline="\n")
     return p

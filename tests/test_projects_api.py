@@ -8,6 +8,7 @@ project's own known directories before handing it to `actions`.
 """
 
 import importlib
+from pathlib import Path
 
 import pytest
 import jarvis_platform as jp
@@ -33,6 +34,21 @@ def wired(monkeypatch, tmp_path):
     import server as server_module
     importlib.reload(server_module)
     run_store.init_db()
+    # An EMPTY roster by default, and config roots pointed somewhere empty.
+    #
+    # Without these, a test asserting "no projects" reads the DEVELOPER'S own
+    # machine: `session_watcher` falls through to the real `~/.claude/sessions`,
+    # and `session_watch.config_roots()` walks the real `~/.claude/projects`,
+    # which holds a transcript directory for every repository they have ever
+    # opened Claude Code in. Running the suite from inside a live session on
+    # this very repo duly produced a phantom "jarvis" project.
+    #
+    # It went unnoticed because a CI runner has neither, and on Windows
+    # because a `C:\...` path was unspeakable until recently and got filtered
+    # out further down regardless. Tests that want a roster assign their own
+    # `_Watcher` over this.
+    monkeypatch.setattr(sw, "config_roots", lambda: [tmp_path / "no-claude-here"])
+    server_module.session_watcher = _Watcher([])
     return server_module, run_store
 
 
@@ -209,16 +225,25 @@ def test_open_in_terminal_calls_actions(wired, monkeypatch):
     assert fake.terminals == [{"cwd": "/p/chitauri", "command": ""}]
 
 
-def test_open_in_browser_calls_actions_with_a_file_uri(wired, monkeypatch):
+def test_open_in_browser_calls_actions_with_a_file_uri(wired, monkeypatch,
+                                                       tmp_path):
     server, _store = wired
     fake = _Launcher()
+    # An absolute path FOR THIS PLATFORM. "/p/chitauri" carries no drive
+    # letter, so on Windows it is a RELATIVE path and `Path.as_uri()` refuses
+    # it outright. That is `as_uri` being correct rather than the endpoint
+    # being fragile: the path reaching it is checked against the project's own
+    # known directories first, so it is always a real one off this disk.
+    project = tmp_path / "chitauri"
+    project.mkdir()
+    path = str(project)
     with TestClient(server.app, headers=BROWSER) as c:
         monkeypatch.setattr(jp, "_HOST", fake_host(launcher=fake))
-        server.session_watcher = _Watcher([_session("s1", "chitauri", "/p/chitauri")])
+        server.session_watcher = _Watcher([_session("s1", "chitauri", path)])
         r = c.post("/api/projects/open",
-                   json={"name": "chitauri", "path": "/p/chitauri", "target": "browser"})
+                   json={"name": "chitauri", "path": path, "target": "browser"})
     assert r.status_code == 200
-    assert fake.opened == ["file:///p/chitauri"]
+    assert fake.opened == [Path(path).as_uri()]
 
 
 def test_open_reports_actions_failure(wired, monkeypatch):

@@ -50,7 +50,7 @@ def write_roster(root: Path, *, pid: int, session_id: str, cwd: str, name: str,
     if extra:
         entry.update(extra)
     p = d / f"{pid}.json"
-    p.write_text(json.dumps(entry))
+    p.write_text(json.dumps(entry), encoding="utf-8", newline="\n")
     return p
 
 
@@ -118,5 +118,5 @@ def write_transcript(root: Path, *, cwd: str, session_id: str,
                              "attachment": {"type": "total_tokens_reminder",
                                             "text": "<total_tokens>1</total_tokens>"},
                              "sessionId": session_id}))
-    p.write_text("\n".join(lines) + "\n")
+    p.write_text("\n".join(lines) + "\n", encoding="utf-8", newline="\n")
     return p

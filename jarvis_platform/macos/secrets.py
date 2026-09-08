@@ -51,3 +51,13 @@ def adopt_private(path: Path) -> int:
         os.close(fd)
         raise
     return fd
+
+
+def restrict(path: Path) -> None:
+    """An existing file, taken down to owner-only.
+
+    Exactly the `chmod(0o600)` the caller used to do inline, so nothing
+    about this platform changes; the point of routing it through the
+    protocol is that Windows cannot express the same promise that way.
+    """
+    os.chmod(str(path), 0o600)

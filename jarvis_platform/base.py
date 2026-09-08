@@ -408,6 +408,24 @@ class Secrets(Protocol):
         """
         ...
 
+    def restrict(self, path) -> None:
+        """Take an EXISTING file down to owner-only access. Raises on failure.
+
+        The third verb, and it exists because "0600" is a POSIX spelling of
+        the promise rather than the promise itself. `server._write_mcp_config`
+        wrote `mcp.json` — which carries the tool token's path and a verbatim
+        copy of every `env` block out of the user's `connections.json`, their
+        Notion token, their GitHub token — and then called `path.chmod(0o600)`
+        to tighten it. On Windows `chmod` only toggles the read-only
+        ATTRIBUTE and restricts nobody, so on that platform the promise in
+        that comment was not kept and the file kept whatever the directory
+        granted.
+
+        Distinct from `create_private` because the caller here has already
+        written the content and wants it made private, not made afresh.
+        """
+        ...
+
 
 class _NoSecrets:
     """A platform whose private-file story has not been written.
@@ -424,6 +442,10 @@ class _NoSecrets:
     def adopt_private(self, path) -> int:
         raise PrivateFileUnsupported(
             f"cannot prove {path} is private to this user on this platform")
+
+    def restrict(self, path) -> None:
+        raise PrivateFileUnsupported(
+            f"cannot restrict {path} to this user on this platform")
 
 
 NO_SECRETS = _NoSecrets()

@@ -120,10 +120,15 @@ def test_the_mcp_child_ignores_a_blank_or_padded_variable(monkeypatch):
 # --- consumer 3: the generated mcp.json ------------------------------------
 
 def test_mcp_config_says_nothing_when_the_platform_can_do_everything(
-        monkeypatch, tmp_path):
+        monkeypatch, tmp_path, as_host):
     monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path))
     import server
     importlib.reload(server)
+    # A complete host is INSTALLED rather than assumed. The name of this test
+    # is a condition, and a machine that withdraws anything does not meet it —
+    # so on Windows this asserted the opposite of what it says. Its twin below
+    # installs an incomplete host in exactly the same way.
+    as_host(fake_host())
     import json
     home = server.data_paths.brain_home()
     home.mkdir(parents=True, exist_ok=True)
@@ -363,15 +368,19 @@ def test_fake_host_keeps_the_real_providers_it_was_not_asked_about():
     actually been swapped."""
     from jarvis_platform import base
     from jarvis_platform.fake import fake_host
-    from jarvis_platform.macos import MACOS
 
     recorder = object()
     host = fake_host(launcher=recorder)
     assert host.launcher is recorder
-    assert host.secrets is MACOS.secrets
-    assert host.screen is MACOS.screen
-    assert host.notifications is MACOS.notifications
-    assert host.dialogs is MACOS.dialogs
+    # THIS machine's providers, not macOS's. `fake_host` keeps "the REAL
+    # host's" — its own words — and the real host is whichever one is running
+    # the suite. Naming MACOS asserted the property only on a Mac and
+    # asserted something plainly false anywhere else.
+    real = jp.current()
+    assert host.secrets is real.secrets
+    assert host.screen is real.screen
+    assert host.notifications is real.notifications
+    assert host.dialogs is real.dialogs
 
     # ...and a test that genuinely wants one absent says so.
     assert fake_host(secrets=base.NO_SECRETS).secrets is base.NO_SECRETS

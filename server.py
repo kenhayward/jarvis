@@ -236,11 +236,20 @@ SCAN_BUDGET_SECONDS = float(os.getenv("JARVIS_SCAN_BUDGET", "20"))
 SCAN_CACHE_SECONDS = float(os.getenv("JARVIS_SCAN_CACHE", "300"))
 
 # Roots are overridable so a user whose Desktop is slow, huge or cloud-backed
-# has somewhere to point this. Colon-separated, like PATH.
+# has somewhere to point this. Separated like PATH — which means `os.pathsep`
+# and NOT a hard-coded ":". The separator is ";" on Windows precisely because
+# ":" already appears in every absolute path there, so splitting on a colon
+# tore each root apart at its drive letter: measured,
+# `C:\Users\me\repos;C:\Users\me\other` came back as three roots, 'C',
+# '\Users\me\repos;C' and '\Users\me\other' — the first of them a RELATIVE
+# path that would then be resolved against the working directory. The
+# variable was simply unusable on that platform. `session_watch.config_roots`
+# splits the same kind of list and already did this correctly.
 def _scan_roots() -> list[Path]:
     override = os.getenv("JARVIS_PROJECT_ROOTS", "").strip()
     if override:
-        return [Path(r).expanduser() for r in override.split(":") if r.strip()]
+        return [Path(r).expanduser()
+                for r in override.split(os.pathsep) if r.strip()]
     return [DESKTOP_PATH, project_maker.projects_root()]
 
 
@@ -943,10 +952,17 @@ def _write_mcp_config(home: Path) -> Path:
     # this to be looser. Chmod after the write as well as before, so a file
     # another local process pre-created with looser permissions does not keep
     # read access to what we just put in it.
+    #
+    # Through the platform rather than `path.chmod(0o600)`, because 0600 is
+    # the POSIX SPELLING of owner-only and not the promise itself. On Windows
+    # `chmod` moves the read-only attribute and restricts nobody at all, so
+    # this file — tokens and all — kept whatever the directory granted while
+    # the comment above claimed otherwise. `secrets.restrict` is `chmod(0o600)`
+    # on macOS, verbatim, and the DACL that `create_private` writes on Windows.
     path.write_text(json.dumps(config, indent=2), encoding="utf-8")
     try:
-        path.chmod(0o600)
-    except OSError as e:                             # pragma: no cover
+        jarvis_platform.current().secrets.restrict(path)
+    except Exception as e:                           # pragma: no cover
         log.warning("could not tighten mcp.json's permissions: %s", e)
     return path
 

@@ -235,3 +235,15 @@ def adopt_private(path: Path) -> int:
         os.close(fd)
         raise
     return fd
+
+
+def restrict(path: Path) -> None:
+    """An existing file, taken down to this user only.
+
+    `_lock_down` is the same call `create_private` makes, so a file this
+    restricts is indistinguishable from one JARVIS created private in the
+    first place -- `_granted_only_to_us` accepts both. That matters because
+    the caller rewrites the file on every start and must not be told on the
+    second start that its own file is somebody else's.
+    """
+    _lock_down(path)
