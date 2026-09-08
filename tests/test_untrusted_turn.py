@@ -215,7 +215,7 @@ def test_the_refusal_names_what_he_read(call):
 def _memory_state(server):
     import jarvis_memory
     index = jarvis_memory._index_path()
-    return (index.read_text() if index.exists() else "",
+    return (index.read_text(encoding="utf-8") if index.exists() else "",
             sorted(p.name for p in jarvis_memory.data_paths.memory_dir().glob("*.md")))
 
 
@@ -275,7 +275,7 @@ def test_a_later_clean_turn_may_still_write(call):
     out = _call("remember", title="Tony prefers Postgres",
                 body="He said so out loud.")
     assert out["ok"] is True, out
-    assert "Postgres" in jarvis_memory._index_path().read_text()
+    assert "Postgres" in jarvis_memory._index_path().read_text(encoding="utf-8")
 
 
 # --- what a tainted turn may still do ------------------------------------

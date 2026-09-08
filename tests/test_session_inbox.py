@@ -89,7 +89,7 @@ def test_everything_else_in_the_file_survives(settings):
     ok, _detail = preflight.enable_cross_session_inbound()
 
     assert ok
-    after = json.loads(settings.read_text())
+    after = json.loads(settings.read_text(encoding="utf-8"))
     assert after["crossSessionInbound"] == "accept"
     for key, value in original.items():
         assert after[key] == value, f"{key} was disturbed"
@@ -103,20 +103,20 @@ def test_a_file_that_will_not_parse_is_never_clobbered(settings):
 
     assert ok is False
     assert "readable JSON" in detail
-    assert settings.read_text().startswith("{ hooks:"), "left exactly as it was"
+    assert settings.read_text(encoding="utf-8").startswith("{ hooks:"), "left exactly as it was"
 
 
 def test_a_missing_file_is_created_with_just_the_one_setting(settings):
     ok, _detail = preflight.enable_cross_session_inbound()
     assert ok
-    assert json.loads(settings.read_text()) == {"crossSessionInbound": "accept"}
+    assert json.loads(settings.read_text(encoding="utf-8")) == {"crossSessionInbound": "accept"}
 
 
 def test_it_is_idempotent(settings):
     _write(settings, {"crossSessionInbound": "accept", "model": "sonnet"})
     ok, detail = preflight.enable_cross_session_inbound()
     assert ok and detail == "already set"
-    assert json.loads(settings.read_text())["model"] == "sonnet"
+    assert json.loads(settings.read_text(encoding="utf-8"))["model"] == "sonnet"
 
 
 # --- what JARVIS says -----------------------------------------------------
@@ -235,7 +235,7 @@ def test_it_is_an_acting_tool(wired):
 async def test_the_tool_writes_it_and_says_so(wired):
     server, settings = wired
     out = await server.tool_enable_session_inbox({})
-    assert json.loads(settings.read_text())["crossSessionInbound"] == "accept"
+    assert json.loads(settings.read_text(encoding="utf-8"))["crossSessionInbound"] == "accept"
     assert "Done, sir" in out
 
 
@@ -248,7 +248,7 @@ async def test_the_tool_refuses_rather_than_wrecking_a_broken_file(wired):
     out = await server.tool_enable_session_inbox({})
 
     assert "couldn't" in out.lower()
-    assert settings.read_text() == "{ broken"
+    assert settings.read_text(encoding="utf-8") == "{ broken"
 
 
 @pytest.mark.asyncio

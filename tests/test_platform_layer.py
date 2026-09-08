@@ -128,7 +128,7 @@ def test_mcp_config_says_nothing_when_the_platform_can_do_everything(
     home = server.data_paths.brain_home()
     home.mkdir(parents=True, exist_ok=True)
     path = server._write_mcp_config(home)
-    env = json.loads(path.read_text())["mcpServers"]["jarvis"]["env"]
+    env = json.loads(path.read_text(encoding="utf-8"))["mcpServers"]["jarvis"]["env"]
     assert "JARVIS_DISABLED_TOOLS" not in env
 
 
@@ -142,7 +142,7 @@ def test_mcp_config_carries_the_withdrawn_list_to_the_child(
     home = server.data_paths.brain_home()
     home.mkdir(parents=True, exist_ok=True)
     path = server._write_mcp_config(home)
-    env = json.loads(path.read_text())["mcpServers"]["jarvis"]["env"]
+    env = json.loads(path.read_text(encoding="utf-8"))["mcpServers"]["jarvis"]["env"]
     assert env["JARVIS_DISABLED_TOOLS"] == "answer_dialog"
 
 

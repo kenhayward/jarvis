@@ -105,7 +105,7 @@ def _dollar_anchored_prefix_checks(path: Path) -> list:
     """[(name, method, lineno)] for every `$`-terminated pattern in this file
     used with `.match()` or `.search()` — compiled once and named, or written
     inline as `re.match(r"…$", x)`."""
-    tree = ast.parse(path.read_text())
+    tree = ast.parse(path.read_text(encoding="utf-8"))
     known = _compiled_patterns(tree)
     out = []
     for node in ast.walk(tree):
@@ -207,7 +207,7 @@ def test_every_hand_written_separator_class_matches_the_language():
     added to a list."""
     checked = 0
     for path in MODULES:
-        tree = ast.parse(path.read_text())
+        tree = ast.parse(path.read_text(encoding="utf-8"))
         for node in ast.walk(tree):
             if (isinstance(node, ast.Assign) and len(node.targets) == 1
                     and isinstance(node.targets[0], ast.Name)
@@ -229,7 +229,7 @@ def test_every_hand_written_separator_class_matches_the_language():
 def _whole_value_checks(path: Path) -> list:
     """Names of compiled patterns used with `.fullmatch()` in this file —
     every "is the WHOLE value this shape" gate the module has."""
-    tree = ast.parse(path.read_text())
+    tree = ast.parse(path.read_text(encoding="utf-8"))
     known = set(_compiled_patterns(tree))
     return sorted({node.func.value.id for node in ast.walk(tree)
                    if isinstance(node, ast.Call)

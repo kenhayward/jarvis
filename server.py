@@ -57,7 +57,7 @@ def _parse_env_lines(text: str) -> list[tuple[str, str]]:
 _env_override = os.getenv("JARVIS_ENV_FILE", "").strip()
 _env_path = Path(_env_override) if _env_override else Path(__file__).parent / ".env"
 if _env_path.exists():
-    for _k, _v in _parse_env_lines(_env_path.read_text()):
+    for _k, _v in _parse_env_lines(_env_path.read_text(encoding="utf-8")):
         os.environ.setdefault(_k, _v)
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
@@ -275,7 +275,8 @@ def _scan_projects_blocking(deadline: float) -> tuple[list[dict], bool]:
                     branch = "unknown"
                     head_file = git_dir / "HEAD"
                     try:
-                        head_content = head_file.read_text().strip()
+                        head_content = head_file.read_text(
+                            encoding="utf-8").strip()
                         if head_content.startswith("ref: refs/heads/"):
                             branch = head_content.replace("ref: refs/heads/", "")
                     except Exception:
@@ -807,7 +808,7 @@ def _read_connections_file() -> tuple[dict, list[str]]:
     """The raw `mcpServers` block, plus anything wrong with the file itself."""
     path = data_paths.connections_path()
     try:
-        raw = path.read_text()
+        raw = path.read_text(encoding="utf-8")
     except FileNotFoundError:
         return {}, []          # nothing declared is not a problem
     except OSError as e:
@@ -931,7 +932,7 @@ def _write_mcp_config(home: Path) -> Path:
     # this to be looser. Chmod after the write as well as before, so a file
     # another local process pre-created with looser permissions does not keep
     # read access to what we just put in it.
-    path.write_text(json.dumps(config, indent=2))
+    path.write_text(json.dumps(config, indent=2), encoding="utf-8")
     try:
         path.chmod(0o600)
     except OSError as e:                             # pragma: no cover
@@ -1766,7 +1767,7 @@ def _append_usage_entry(input_tokens: int, output_tokens: int, call_type: str = 
             "input_tokens": input_tokens,
             "output_tokens": output_tokens,
         }
-        with open(_USAGE_FILE, "a") as f:
+        with open(_USAGE_FILE, "a", encoding="utf-8") as f:
             f.write(_json.dumps(entry) + "\n")
     except Exception:
         pass
@@ -1779,7 +1780,8 @@ def _get_usage_for_period(seconds: float | None = None) -> dict:
     cutoff = (time.time() - seconds) if seconds else 0
     try:
         if _USAGE_FILE.exists():
-            for line in _USAGE_FILE.read_text().strip().split("\n"):
+            raw = _USAGE_FILE.read_text(encoding="utf-8").strip()
+            for line in raw.split("\n"):
                 if not line:
                     continue
                 entry = _json.loads(line)
@@ -2081,7 +2083,7 @@ async def api_memory_doc(kind: str, slug: str):
     if path is None:
         return JSONResponse(status_code=404, content={"error": "Not found"})
     try:
-        text = path.read_text()
+        text = path.read_text(encoding="utf-8")
     except OSError:
         return JSONResponse(status_code=404, content={"error": "Not found"})
     return {"slug": slug, "text": text}
@@ -6878,8 +6880,8 @@ def _read_env(create: bool = False) -> tuple[list[str], dict[str, str]]:
             import shutil as _shutil
             _shutil.copy2(str(example), str(path))
         else:
-            path.write_text("")
-    text = path.read_text()
+            path.write_text("", encoding="utf-8")
+    text = path.read_text(encoding="utf-8")
     lines = text.splitlines()
     # The same parser the boot loader uses, and the same one the writer asks
     # before it commits a value — see `_parse_env_lines`.
@@ -6913,7 +6915,8 @@ def _write_env_key(key: str, value: str) -> None:
         new_lines.append(line)
     if not found:
         new_lines.append(f"{key}={value}")
-    _env_file_path().write_text("\n".join(new_lines) + "\n")
+    _env_file_path().write_text("\n".join(new_lines) + "\n",
+                                encoding="utf-8")
     os.environ[key] = value
 
 class KeyUpdate(BaseModel):

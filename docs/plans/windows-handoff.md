@@ -11,11 +11,85 @@ are ordered the way they are. This document is only about doing phase 3.
 
 - Phase 1 (portability defects) — merged, PR #3.
 - Phase 2 (the platform layer) — merged, PR #4.
-- Phase 3 — `feat/windows-platform`. The tool token, the launcher and
-  notifications are written; nothing is verified.
+- Phase 3 — merged, PR #5. The tool token, the launcher and notifications
+  were written from documentation.
+- **The Windows box is live as of 2026-09-08** and the suite runs on it.
+  `fix/windows-portability-defects` carries the first round of corrections.
 - macOS suite: 2523 passed, 2 failed. Both failures are
   `tests/test_projects_api.py` (`RuntimeError: Event loop is closed`),
-  pre-existing and unrelated, parked until after this phase.
+  pre-existing and unrelated, parked until after this phase. **Not re-run
+  since the corrections below — the macOS CI leg is the gate for them.**
+
+### The Windows number, and how it moved
+
+| | failed | passed | errors |
+|---|---|---|---|
+| first run on a real box | 267 | 1788 | 443 |
+| after the four fixes below | **266** | **2215** | **11** |
+
+Read that carefully: the ERRORS collapsed and 427 more tests pass, but the
+FAILURE count barely moved. The errors were four portability defects in
+shared code. The 266 failures are a different thing — they are the port
+itself being unfinished, and they are the real work remaining.
+
+Boot is no longer the blocker: `ensure_tool_token()` returns a token, and
+`import usage_scan` (and therefore `import server`) succeeds.
+
+### The four defects, none of them in `jarvis_platform/windows/`
+
+All four were in code shared by both platforms, which is why the macOS
+suite could never have caught them:
+
+1. **`usage_scan.py:161`** — `datetime(2, 1, 1).timestamp()`. On Windows a
+   naive `.timestamp()` raises `OSError(22)` for anything at or before
+   1970-01-01 (measured; 9997 fails too, so BOTH bounds raised). This is
+   module level, and `server.py:85` imports the module — so the server
+   could not start at all. Now computed by subtraction from the epoch.
+2. **`data_paths.py:171`** — `os.fdopen(fd, "w")` with no encoding, writing
+   a persona full of em-dashes through cp1252. The `UnicodeEncodeError` is
+   a **ValueError**, so the `except OSError` two lines down did not catch
+   it; it escaped `_sync_template` and killed every fixture that seeds a
+   brain home. This one line was 432 of the 443 errors.
+3. **~30 `read_text` / `write_text` / `open` calls** with no `encoding=`,
+   defaulting to cp1252. `repo_read.py` had the nastier variant —
+   `errors="replace"` *without* `encoding=`, which silently mojibakes a
+   repository the brain is reading rather than raising.
+4. **`os.geteuid()`** evaluated at import inside a `skipif`, taking a whole
+   test module down at collection. The two tests it guarded also lose their
+   premise here: `os.chmod(p, 0o000)` on Windows returns mode `0o444` and
+   the file stays readable (measured), so there is no unreadable file to
+   test with. Skipped on Windows rather than adapted.
+
+### Known live problem, not yet fixed
+
+**Every safety-rail fixture patches `jarvis_platform.macos.*` BY NAME, so
+on Windows it patches a module nothing calls and the real thing runs.**
+Two were observed doing it during one suite run on 2026-09-08:
+
+* `tests/conftest.py:46` — autouse, therefore the WHOLE suite. Its
+  docstring is "No test may spam the developer's Notification Centre."
+  Real Windows toasts appeared on screen throughout the run.
+* `tests/test_start_build.py:715` — "No test may open a real Terminal
+  window." A console window opened running `npm` in a pytest tmp dir.
+
+`tests/test_needs_you_notification.py` (four sites) has the same shape and
+is likely a third.
+
+The fix is to patch what `jp.current()` actually returns rather than the
+macOS module by name. These are fixtures macOS depends on too, so the
+change wants the macOS gate run on it.
+
+There is one accidental benefit, and it is worth stating because it is the
+only reason a guess in the table above could be closed: the toasts that
+escaped are what CONFIRMED the AUMID. An unregistered one returns True and
+shows nothing, so no test could ever have proved this — only a person
+looking at the screen. Do not "fix" the fixture and consider the AUMID
+still unverified; it is verified, by exactly this accident.
+
+Distinguish these from the tests that name a macOS module ON PURPOSE
+(`test_notifier.py`, `test_applescript_escape.py`, `test_answer_dialog.py`
+and similar) — those are testing the macOS implementation itself and are
+correct as they are. Only the platform-neutral safety rails are wrong.
 
 ## The one thing to understand before touching anything
 
@@ -27,15 +101,22 @@ claim to be tested, not as working code.
 
 The guesses are isolated so a real box corrects each in one place:
 
-| Guess | Lives in | Pinned by |
-|---|---|---|
-| what `icacls <path>` prints | `windows/secrets.py::_parse_aces` | `_ICACLS_OURS`, `_ICACLS_INHERITED` |
-| what `whoami /user /fo csv /nh` prints | `windows/secrets.py::_parse_whoami` | `_WHOAMI_SAMPLE` |
-| the toast AUMID | `windows/notifications.py::_AUMID` | nothing — it fails silently, see below |
-| `wt` / `cmd.exe` argv | `windows/launcher.py::_terminal_argv` | `tests/test_windows_platform.py` |
+| Guess | Lives in | Pinned by | Status |
+|---|---|---|---|
+| what `icacls <path>` prints | `windows/secrets.py::_parse_aces` | `_ICACLS_OURS`, `_ICACLS_INHERITED` | **confirmed** 2026-09-08, one correction |
+| what `whoami /user /fo csv /nh` prints | `windows/secrets.py::_parse_whoami` | `_WHOAMI_SAMPLE` | **confirmed** 2026-09-08, exact |
+| the toast AUMID | `windows/notifications.py::_AUMID` | nothing — it fails silently, see below | **confirmed** 2026-09-08 — real toasts seen on screen |
+| `wt` / `cmd.exe` argv | `windows/launcher.py::_terminal_argv` | `tests/test_windows_platform.py` | not yet run |
 
 All the samples are in `tests/test_windows_platform.py`. Replace one with
 real output and the failures will name everything downstream of it.
+
+The one correction: real inherited ACEs print an `(I)` flag before the
+rights — `NT AUTHORITY\SYSTEM:(I)(F)`, not `:(F)`. `_parse_aces` was
+unaffected (measured against the real text, it returned the same three
+names), but the sample now carries the flag, because a sample that cannot
+occur has stopped testing what it names. `_granted_only_to_us` returned
+True on the live token file, and `icacls` on it showed exactly one ACE.
 
 ## Setting the machine up
 
@@ -55,6 +136,28 @@ python -m playwright install chromium
 cd frontend && npm ci && cd ..
 copy .env.example .env
 ```
+
+Two corrections from doing this on a real box (2026-09-08):
+
+* **`py -3.12` may not resolve.** If Python is also installed from the
+  Microsoft Store, `py` is the Store launcher and answers 3.13; and a
+  winget install puts the real one at
+  `%LOCALAPPDATA%\Programs\Python\Python312\python.exe`. Build the venv
+  from that absolute path and the ambiguity disappears. Worth doing
+  regardless of `py`: a Store Python runs under package identity, and the
+  ACLs it writes are not necessarily the ACLs the icacls check below is
+  reading about.
+* **`openssl` is likely already on PATH.** Git for Windows ships it at
+  BOTH `Git\usr\bin\openssl.exe` and `Git\mingw64\bin\openssl.exe`, and
+  the latter is on the default PATH, so plain `openssl` works and the long
+  path below is only needed if it does not.
+
+`core.autocrlf` is `true` by default in Git for Windows. Nothing in the
+repo pins line endings (there is no `.gitattributes`), so a fresh clone
+here checks out CRLF while the repository holds LF. That has not bitten
+yet — the edits in this branch were made with LF preserved and the diffs
+are clean — but it is worth knowing before blaming a whitespace diff on
+something else.
 
 The certs are not optional for the Vite dev workflow — `vite.config.ts`
 hard-codes `https://localhost:8340`. There is no `openssl` on a stock
@@ -89,20 +192,26 @@ pytest -q
 
 Each of these takes a minute and either confirms a sample or replaces one.
 
-1. **`whoami /user /fo csv /nh`** — compare with `_WHOAMI_SAMPLE`. A domain
-   account is the interesting case; the SID is used for the grant precisely
-   because the name is ambiguous.
-2. **`icacls <data>\jarvis\tool-token`** after a successful boot — compare
-   with `_ICACLS_OURS`. It should be exactly one ACE naming you.
-   Then check a file JARVIS did *not* create (`icacls` on any ordinary file)
-   against `_ICACLS_INHERITED`.
+1. ~~**`whoami /user /fo csv /nh`**~~ — **DONE 2026-09-08.** Exactly the
+   sample's shape: `"proart\kenha","S-1-5-21-…-1001"`. `_parse_whoami`
+   returned the pair unchanged. A domain account is still the untested case.
+2. ~~**`icacls <data>\jarvis\tool-token`**~~ — **DONE 2026-09-08.** One ACE,
+   `PROART\kenha:(F)`, as designed; `_granted_only_to_us` returned True. An
+   ordinary file gave the three inherited ACEs, but each carrying `(I)`, and
+   `_ICACLS_INHERITED` has been corrected to match. `_parse_aces` read both
+   real outputs correctly with no change.
 3. **Adoption refuses a foreign file.** Put a file with inherited ACLs at the
    token path and confirm the server refuses to boot rather than adopting
    it. This is the property that stops JARVIS trusting a token somebody else
-   chose and knows.
-4. **A toast actually appears.** `_AUMID` is the likely failure and it fails
-   *silently* — an unregistered AUMID makes `Show()` succeed and display
-   nothing. Drive it directly rather than waiting for a real notification:
+   chose and knows. **Still open** — the two above were read-only, this one
+   writes to the token path and was left for a deliberate run.
+4. ~~**A toast actually appears.**~~ — **DONE 2026-09-08. The AUMID is
+   right.** Real toasts were seen on screen during a suite run, which is
+   the only kind of evidence that settles this: an unregistered AUMID makes
+   `Show()` succeed and display nothing, so `notify()` returning True
+   proves nothing and no test can prove it either. The toasts escaped
+   because of the fixture defect described above — an accident, but a
+   conclusive one. If you ever need to re-check it by hand:
    ```
    python -c "import asyncio; from jarvis_platform.windows import notifications as n; print(asyncio.run(n.notify('JARVIS','test','sub')))"
    ```
@@ -118,18 +227,45 @@ Each of these takes a minute and either confirms a sample or replaces one.
 Record the answers in the PR or here; each one decides whether a capability
 gets built at all.
 
-- **Roster shape.** What is in `~/.claude/sessions/<pid>.json` on Windows —
-  same shape, and what does `socket_path` contain? `session_watch.py` and
-  session steering are both built on the answer. If it is a named pipe
-  (`\\.\pipe\...`), ordinary file I/O may reach it; `socket.AF_UNIX` is not
-  exposed by CPython here.
-- **Config roots.** Does the CLI use `~/.claude` on Windows, or `%APPDATA%`?
-  `session_watch.DEFAULT_ROOTS` assumes the former.
+- ~~**Roster shape.**~~ **ANSWERED 2026-09-08. Same shape**, every key
+  `_parse_entry` reads present and spelled identically:
+  ```json
+  {"pid":33448,"sessionId":"de61a2…","cwd":"C:\\Users\\kenha\\repos\\jarvis",
+   "version":"2.1.260","kind":"interactive","entrypoint":"claude-desktop",
+   "pidDomain":"win32:proart",
+   "messagingSocketPath":"\\\\.\\pipe\\LOCAL\\cc-msg-9f81935021e5e05c7c258918655587c8"}
+  ```
+  `socket_path` **is a named pipe**, as suspected. `pidDomain` is new and
+  is not read by anything yet.
+
+  **This breaks `RosterEntry.steerable` (`session_watch.py:183`), and not
+  in the way you would expect.** `Path(sp).exists()` opens a pipe instance
+  to stat it, so on a busy pipe it RAISES rather than returning a bool —
+  measured, five calls in a row: the first answered True (an instance was
+  free), the next four raised `OSError(22) "All pipe instances are busy"`.
+  `steerable` is a property, and one of its callers is the sort key at
+  `session_watch.py:753`, so the raise does not merely disable steering,
+  it takes down roster listing. `os.path.exists()` is NOT the fix: it
+  swallows the error and answers False, reporting every Windows session as
+  un-steerable. What works, without consuming an instance, is enumerating
+  the namespace — `os.listdir("//./pipe")` returned 188 pipes including
+  ours. Note the spelling: `\\.\pipe` and `\\.\pipe\` both raise `ENOENT`.
+- ~~**Config roots.**~~ **ANSWERED 2026-09-08.** `~/.claude`, so
+  `session_watch.DEFAULT_ROOTS` needs no change. It holds `sessions/`,
+  `projects/` and `settings.json`. `%APPDATA%\claude` and
+  `%LOCALAPPDATA%\claude` both also exist but belong to the desktop app,
+  not to the CLI, and hold no roster.
 - **`claude -p --output-format stream-json`.** Same line buffering, exit
   codes and `--dangerously-skip-permissions` behaviour? The run pipeline's
   terminal-state invariant depends on the failure modes being ones it
-  already handles. Also: is it `claude.cmd`? `create_subprocess_exec` cannot
-  run a `.cmd` directly — phase 1 fixed the *splitting*, not the *spawning*.
+  already handles. **Partly answered:** the `.cmd` question is conditional
+  on install method, not universal. The native installer puts a real
+  `claude.exe` at `%USERPROFILE%\.local\bin`, which
+  `create_subprocess_exec` can run directly; only the npm global is a
+  `.cmd` needing a wrapper. Worth deciding which one JARVIS should require
+  rather than writing a wrapper for a case the native install avoids.
+  (Watch for the two shadowing each other on PATH — the native one wins,
+  so an `npm install -g` "upgrade" can leave the older binary in charge.)
 - **pid → console window.** Is there any mechanism that maps a Claude Code
   pid to a specific console window with the certainty a tty gives? If not,
   `answer_dialog` stays a macOS capability and `CAP_DIALOG_KEY` is never

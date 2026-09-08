@@ -156,7 +156,7 @@ def test_a_symlink_in_the_token_path_is_refused_not_followed(client, tmp_path):
     with _pytest.raises(OSError):
         server.data_paths.ensure_tool_token()
 
-    assert planted.read_text() == "attacker-chosen-token"
+    assert planted.read_text(encoding="utf-8") == "attacker-chosen-token"
     assert planted.stat().st_mode & 0o777 == 0o644, "chmod followed the link"
 
 

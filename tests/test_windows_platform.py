@@ -117,10 +117,26 @@ def test_untrusted_text_never_enters_the_notification_script():
         assert f"$env:{var}" in win_notify._NOTIFY_SCRIPT
 
 
+# Both of the next two describe the module when it is NOT on its own
+# platform, which is the state this file was written in. Run them ON Windows
+# and `available()` is correctly True and `notify()` correctly hands a toast
+# off, so the assertions below can only hold off-Windows — measured, on a
+# real box: both returned True. Skipped rather than inverted, because the
+# property each one pins (inert off-platform) is still worth pinning, and
+# the Windows-side property is NOT "notify returns True": a toast handed to
+# an unregistered AUMID also returns True and displays nothing. That one
+# cannot be settled from a test at all — see docs/plans/windows-handoff.md.
+_off_windows_only = pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="describes the module off its own platform; on Windows both are True")
+
+
+@_off_windows_only
 def test_notifications_are_unavailable_off_windows():
     assert win_notify.available() is False
 
 
+@_off_windows_only
 @pytest.mark.asyncio
 async def test_a_notification_that_cannot_be_posted_reports_false_not_raises():
     """A fallback that raises would break the announcement it stands in
@@ -130,9 +146,9 @@ async def test_a_notification_that_cannot_be_posted_reports_false_not_raises():
 
 # --- the token: parsing is the part a real box has to confirm --------------
 
-# Sample output quoted from Microsoft's documentation, NOT measured. If a
-# real Windows box prints something else, correct it here and the failures
-# will point at everything downstream.
+# MEASURED on a real Windows 11 box (2026-09-08), no longer quoted from
+# documentation. The shapes the Mac guessed were right; one detail was not,
+# and it is kept below because it is the one a future edit could get wrong.
 _WHOAMI_SAMPLE = '"desktop-abc\\ken","S-1-5-21-1111111111-2222222222-3333333333-1001"\n'
 
 _ICACLS_OURS = (
@@ -140,10 +156,15 @@ _ICACLS_OURS = (
     "\n"
     "Successfully processed 1 files; Failed processing 0 files\n")
 
+# The correction: real inherited ACEs carry an (I) flag before the rights,
+# which the documentation sample omitted. `_parse_aces` splits on the LAST
+# colon-paren group and was unaffected — measured, it returned the same three
+# names from the real output — but a sample that cannot occur is a sample
+# that stops testing the thing it names, so this is the real text.
 _ICACLS_INHERITED = (
-    "C:\\data\\jarvis\\tool-token NT AUTHORITY\\SYSTEM:(F)\n"
-    "                            BUILTIN\\Administrators:(F)\n"
-    "                            DESKTOP-ABC\\ken:(F)\n"
+    "C:\\data\\jarvis\\tool-token NT AUTHORITY\\SYSTEM:(I)(F)\n"
+    "                            BUILTIN\\Administrators:(I)(F)\n"
+    "                            DESKTOP-ABC\\ken:(I)(F)\n"
     "\n"
     "Successfully processed 1 files; Failed processing 0 files\n")
 

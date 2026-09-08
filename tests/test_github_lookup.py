@@ -309,7 +309,7 @@ async def test_the_repository_name_is_an_argument_and_never_a_shell_string(
     nasty = f"arcreactor; touch {marker} && echo `whoami`"
     await gh_lookup.look_up(nasty)
 
-    lines = [json.loads(x) for x in log.read_text().splitlines()]
+    lines = [json.loads(x) for x in log.read_text(encoding="utf-8").splitlines()]
     assert lines, "the fake gh was never run"
     assert not marker.exists(), "a shell ran"
     flat = [arg for line in lines for arg in line]
@@ -340,7 +340,7 @@ async def test_a_search_query_can_never_be_read_as_a_flag(tmp_path, monkeypatch)
     query = "--json=/etc/passwd arcreactor"
     await gh_lookup.look_up(query)
 
-    searches = [json.loads(x) for x in log.read_text().splitlines()
+    searches = [json.loads(x) for x in log.read_text(encoding="utf-8").splitlines()
                 if json.loads(x)[:2] == ["search", "repos"]]
     assert searches, "no search was run"
     for argv in searches:
@@ -558,7 +558,7 @@ def test_the_brain_is_told_to_take_the_fast_path_and_to_fill_the_wait():
     first, then do the slow thing — what he writes is spoken as he writes it,
     so it fills the wait rather than following it."""
     guidance = Path(__file__).resolve().parents[1] / "jarvis_home" / "CLAUDE.md"
-    text = guidance.read_text()
+    text = guidance.read_text(encoding="utf-8")
     assert "`github_repo`, never a search" in text
     assert "BEFORE you look" in text
     assert "Looking now, sir." in text

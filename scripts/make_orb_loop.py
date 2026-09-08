@@ -413,7 +413,7 @@ async def render_frames(frames_dir: pathlib.Path, cfg: argparse.Namespace,
     work = frames_dir / "harness"
     work.mkdir(parents=True, exist_ok=True)
     bundle_orb(work)
-    (work / "orb-loop.html").write_text(HARNESS)
+    (work / "orb-loop.html").write_text(HARNESS, encoding="utf-8")
     httpd, port = serve(work)
 
     per_out = RENDER_HZ // cfg.fps          # orb frames per captured frame

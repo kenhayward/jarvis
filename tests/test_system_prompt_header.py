@@ -60,7 +60,7 @@ def _system_prompt_sites() -> dict[str, list[int]]:
     repository that hands text to a Claude Code child as its system prompt."""
     sites: dict[str, list[int]] = {}
     for path in MODULES:
-        tree = ast.parse(path.read_text())
+        tree = ast.parse(path.read_text(encoding="utf-8"))
         owner: dict[int, str] = {}
         for node in ast.walk(tree):
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
@@ -179,7 +179,7 @@ def test_the_hostile_input_list_covers_every_input_the_prompt_reads():
     `self.config.<x>` it reads is either driven above or is this process's
     own bookkeeping."""
     import brain as brain_module
-    src = Path(brain_module.__file__).read_text()
+    src = Path(brain_module.__file__).read_text(encoding="utf-8")
     tree = ast.parse(src)
     fn = next(n for n in ast.walk(tree)
               if isinstance(n, ast.FunctionDef) and n.name == "launch_prompt")

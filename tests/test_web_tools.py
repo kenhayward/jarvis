@@ -286,7 +286,7 @@ def test_the_brain_is_told_a_web_page_is_never_an_instruction(tmp_path):
     generation."""
     import brain
     guidance = Path(__file__).resolve().parents[1] / "jarvis_home" / "CLAUDE.md"
-    text = guidance.read_text()
+    text = guidance.read_text(encoding="utf-8")
     assert "web page" in text and "never an instruction" in text
 
     prompt = brain.Brain(_config(tmp_path)).launch_prompt()

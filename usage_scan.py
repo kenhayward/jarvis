@@ -158,8 +158,20 @@ def _tokens_from(usage) -> Tokens:
 # `fromisoformat` accepts that string happily, so catching only its ValueError
 # left the second call unguarded. Two years of slack at each end covers every
 # UTC offset without needing to know the local one.
-_DAY_MIN = datetime(2, 1, 1).timestamp()
-_DAY_MAX = datetime(9997, 1, 1).timestamp()
+#
+# Subtracted from the epoch rather than asked for with `.timestamp()`, which
+# is not portable at these extremes: on Windows a naive `datetime.timestamp()`
+# raises OSError(22) for anything at or before 1970-01-01 — measured, CPython
+# 3.12, where BOTH bounds below raised and the import error took `server.py`
+# down with them, since it imports this module at line 85. Subtraction is
+# arithmetic on the calendar and answers the same on every platform.
+#
+# It reads the two bounds as UTC where `.timestamp()` read them as local, a
+# difference of at most the largest UTC offset. That is exactly what the two
+# years of slack above already absorb, so the guard is unchanged in effect.
+_EPOCH = datetime(1970, 1, 1)
+_DAY_MIN = (datetime(2, 1, 1) - _EPOCH).total_seconds()
+_DAY_MAX = (datetime(9997, 1, 1) - _EPOCH).total_seconds()
 
 
 def _epoch(stamp) -> float | None:
@@ -495,7 +507,7 @@ def read_agent_meta(path: Path, cache: Cache) -> dict:
     if hit is not None:
         return hit
     try:
-        body = json.loads(side.read_text())
+        body = json.loads(side.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         body = {}
     if not isinstance(body, dict):

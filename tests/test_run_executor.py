@@ -604,7 +604,7 @@ async def test_explicit_model_reaches_the_child_argv(env):
     run = await ex.wait_for(run_id)
 
     assert run["status"] == store.RunStatus.SUCCEEDED
-    argv = json.loads(marker.read_text())
+    argv = json.loads(marker.read_text(encoding="utf-8"))
     assert argv[argv.index("--model") + 1] == "haiku"
 
 
@@ -617,7 +617,7 @@ async def test_spawn_without_model_falls_back_to_env(env, monkeypatch):
     run_id = await ex.spawn("do a thing", "proj", str(tmp), "api")
     await ex.wait_for(run_id)
 
-    argv = json.loads(marker.read_text())
+    argv = json.loads(marker.read_text(encoding="utf-8"))
     assert argv[argv.index("--model") + 1] == "opus"
 
 
@@ -631,7 +631,7 @@ async def test_spawn_with_neither_falls_back_to_sonnet_and_flag_always_present(
     run_id = await ex.spawn("do a thing", "proj", str(tmp), "api")
     await ex.wait_for(run_id)
 
-    argv = json.loads(marker.read_text())
+    argv = json.loads(marker.read_text(encoding="utf-8"))
     assert "--model" in argv, "--model must never be omitted"
     assert argv[argv.index("--model") + 1] == "sonnet"
 
@@ -744,7 +744,7 @@ async def test_prompt_is_delivered_via_stdin(env):
     run = await ex.wait_for(run_id)
 
     assert run["status"] == store.RunStatus.SUCCEEDED
-    assert marker.read_text() == "the secret prompt text"
+    assert marker.read_text(encoding="utf-8") == "the secret prompt text"
 
 
 # ---------------------------------------------------------------------------
@@ -783,7 +783,7 @@ async def test_a_run_never_inherits_api_credentials(env, monkeypatch):
     run = await ex.wait_for(run_id)
 
     assert run["status"] == store.RunStatus.SUCCEEDED
-    child = json.loads(marker.read_text())
+    child = json.loads(marker.read_text(encoding="utf-8"))
     leaked = [k for k in child
               if k.startswith(("ANTHROPIC_", "CLAUDE_CODE_"))
               or k == "CLAUDECODE"]
@@ -812,7 +812,7 @@ async def test_a_run_still_gets_the_ordinary_environment(env, monkeypatch):
     run_id = await ex.spawn("do a thing", "proj", str(tmp), "voice")
     await ex.wait_for(run_id)
 
-    child = json.loads(marker.read_text())
+    child = json.loads(marker.read_text(encoding="utf-8"))
     assert child.get("PATH") == os.environ["PATH"]
     assert child.get("HOME") == os.environ["HOME"]
     assert child.get("CLAUDE_CONFIG_DIR") == "/keep/me"

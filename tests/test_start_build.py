@@ -81,7 +81,7 @@ def test_write_spec_creates_both_superpowers_directories(tmp_path):
     relative = builds.write_spec(str(tmp_path), SPEC,
                                  today=datetime.date(2026, 9, 3))
     assert (tmp_path / relative).is_file()
-    assert "no database" in (tmp_path / relative).read_text()
+    assert "no database" in (tmp_path / relative).read_text(encoding="utf-8")
     # A fresh project from create_project has neither directory, and the brief
     # points the session at the plans one.
     assert (tmp_path / builds.PLAN_DIR).is_dir()
@@ -226,7 +226,7 @@ def test_a_plan_in_the_real_emitted_shape_parses():
     recognising any one of them fails here.
     """
     from pathlib import Path
-    text = (Path(__file__).parent / "fixtures" / "plan_real_shape.md").read_text()
+    text = (Path(__file__).parent / "fixtures" / "plan_real_shape.md").read_text(encoding="utf-8")
     tasks = builds.parse_plan(text)
 
     assert [t.number for t in tasks] == [1, 2, 3, 4]
@@ -458,7 +458,7 @@ async def test_the_spec_is_written_into_the_project_before_anything_spawns(
 
     written = sorted((project / builds.SPEC_DIR).glob("*-design.md"))
     assert len(written) == 1, "the agreed spec must be persisted in the project"
-    text = written[0].read_text()
+    text = written[0].read_text(encoding="utf-8")
     assert "no database" in text, "what the user agreed, verbatim"
     assert "Standard library only." in text
     assert "No authentication." in text
@@ -490,7 +490,7 @@ async def test_starting_a_build_records_the_approval_as_a_file(ready, project):
     assert specs_module.approval_of(str(project), relative)["state"] == "approved"
 
     # And the approval belongs to those words, not to the file.
-    written[0].write_text(written[0].read_text() + "\n## Late addition\n\nx\n")
+    written[0].write_text(written[0].read_text(encoding="utf-8") + "\n## Late addition\n\nx\n")
     assert specs_module.approval_of(str(project), relative)["state"] == "superseded"
 
 
