@@ -129,10 +129,16 @@ the commit why the alternative was worse.
 - `session_watch.py` — Watches every Claude Code session on the machine
   (process / conversation / project)
 - `session_steer.py` — Sends a message into a running session's inbox socket
-- `dialog.py` — Answers a permission prompt in a Terminal window by sending
-  it a keystroke (needs Accessibility)
-- `notifier.py` — macOS notification fallback when no browser tab is
-  connected to speak through
+- `jarvis_platform/macos/dialogs.py` — Answers a permission prompt in a
+  Terminal window by sending it a keystroke (needs Accessibility). The
+  closed key vocabulary (`normalize_key`) and the outcome constants are in
+  `jarvis_platform/base.py`, not here: they are the protocol, and a second
+  implementation does not get to widen either. Was `dialog.py`
+- `jarvis_platform/macos/notifications.py` — macOS notification fallback
+  when no browser tab is connected to speak through. Reached as
+  `jarvis_platform.current().notifications`; a platform without one
+  declines rather than raising, because the announcement path must never
+  break. Was `notifier.py`
 - `jarvis_memory.py` — Long-term memory: a folder of plain Markdown files the
   user can read and edit directly, not a database
 - `usage_store.py` — Tracks the subscription's five-hour / seven-day
@@ -142,15 +148,34 @@ the commit why the alternative was worse.
   configured voice is actually installed, or the Fish key), cross-session
   steering
 - `claude_env.py` — The environment every spawned Claude Code child gets,
-  including the `ANTHROPIC_*` scrub
-- `actions.py` — System actions (Terminal, Chrome) via AppleScript
+  including the `ANTHROPIC_*` scrub, and `split_command` for the configured
+  `claude` path (POSIX splitting destroys a Windows one)
+- `jarvis_platform/` — What this machine can do, stated once. `base.py` holds
+  the capability constants and `TOOL_CAPABILITIES` (tool name -> capability);
+  `macos/` declares all of them, so on a Mac this layer is invisible, and
+  holds the implementations as MODULES (not class instances) so the test
+  suite can keep patching them across an `importlib.reload(server)`.
+  Four consumers read it and they must not disagree: the `/internal/tool`
+  dispatch gate, `brain.granted_tools`, the `JARVIS_DISABLED_TOOLS` env block
+  in `_write_mcp_config`, and `preflight`'s `_CHECK_CAPABILITIES`. **Not**
+  named `platform/` — that would shadow the stdlib module for the whole
+  process, since `server.py` runs from the repository root
+- `jarvis_platform/macos/launcher.py` — Terminal, browser and editor via
+  AppleScript. Reached as `jarvis_platform.current().launcher`. It composes
+  its own `cd` and does its own quoting: `shlex.quote` is POSIX, so leaving
+  it at the call site meant three copies in `server.py` that would each have
+  to be found and corrected for cmd.exe. Was `actions.py`
 - `browser.py` — Playwright. Only the headless half is live (`read_page`,
   `capture_page`, behind `read_page` / `look_at_page`); the headful
   `JarvisBrowser` search/research class is reachable from nothing but
   `tests/test_browser_integration.py`
-- `screen.py` — Seeing the Mac itself: the window list (`osascript`) and one
-  downscaled `screencapture` the brain sees as an MCP image block. Captured
-  only on a turn the user drove, never persisted, never on a timer
+- `jarvis_platform/macos/screen.py` — Seeing the Mac itself: the window list
+  (`osascript`) and one downscaled `screencapture` the brain sees as an MCP
+  image block. Captured only on a turn the user drove, never persisted,
+  never on a timer — those are protocol rules, stated on `base.Screen` and
+  binding on every implementation. `permission_granted()` returns True on a
+  platform that needs no such permission; None means only that the probe
+  could not run. Was `screen.py`
 - `repo_read.py` — Cheap, model-free reading of a repository (no `claude`
   subprocess)
 - `project_maker.py` — Creates a new project directory from a spoken name,
@@ -333,6 +358,13 @@ gh pr create --repo kenhayward/jarvis --base main
   tag machinery is gone in full, including the last handler (`_execute_browse`),
   which lost its caller with the voice dispatch chain
 - AppleScript for Terminal and Chrome control (no OAuth needed)
+- A platform that cannot do something **withdraws the tool, it never fakes
+  it**. A tool that always answers "not supported here" is described to the
+  brain every turn at ~250 tokens, invites an attempt, and gives it something
+  to apologise for; a tool the brain never sees costs nothing. Portable is the
+  default — a tool is only platform-bound if it is listed in
+  `jarvis_platform.base.TOOL_CAPABILITIES`, so forgetting to list one leaves
+  it working everywhere rather than silently dead where nobody tested
 - SQLite for runs, run events and usage (`run_store.py`, `usage_store.py`);
   long-term memory is plain Markdown files instead (`jarvis_memory.py`) —
   the user edits it directly, so it is never a database

@@ -1,6 +1,6 @@
 """Opening the result: a browser, or a terminal.
 
-`actions.py` has been able to do this since the first version — it was never
+The launcher has been able to do this since the first version — it was never
 wired to the tool-based brain, so JARVIS could build a site and then not show
 it to anybody. The user's words: "he will need to be able to read output from
 sessions to be able to open up results in browser."
@@ -10,39 +10,55 @@ echoing something a spawned run said, so an absolute path is never opened on
 trust — it is resolved and proved to sit inside a directory JARVIS already
 knows as a project.
 
-NOTHING in this file may launch a browser or a terminal: `actions` is mocked
-at the module boundary, and the recorder asserts what it was handed.
+NOTHING in this file may launch a browser or a terminal: a recording
+Launcher is installed on a fake host, and the recorder asserts what it was
+handed. Mocking at the protocol boundary rather than at a module means
+this file will exercise the Windows launcher unchanged.
 """
 
 import importlib
 
 import pytest
 
+import jarvis_platform as jp
+from jarvis_platform.fake import fake_host
 
-class _Actions:
-    """Stands in for actions.py. Records, never launches."""
+
+class _Launcher:
+    """A recording Launcher. Records, never launches.
+
+    The record lists are named apart from the protocol methods on purpose —
+    `browser`/`terminal`/`editor` are the interface, so what they captured
+    goes in `opened`/`terminals`/`edited`.
+    """
 
     def __init__(self, success=True):
-        self.browser: list[str] = []
+        self.opened: list[str] = []         # every URL handed to browser()
         self.browsers: list[str] = []       # which application each went to
-        self.terminal: list[str] = []
+        self.terminals: list[dict] = []     # the cwd/command pairs, unjoined
+        self.edited: list[str] = []
         self.success = success
 
-    async def open_browser(self, url, browser="chrome"):
-        self.browser.append(url)
-        self.browsers.append(browser)
-        # Mirrors the real actions.open_browser, which names the application
-        # it actually drove.
-        app = "Firefox" if browser == "firefox" else "Chrome"
+    async def browser(self, url, which="chrome"):
+        self.opened.append(url)
+        self.browsers.append(which)
+        # Mirrors the real launcher, which names the application it drove.
+        app = "Firefox" if which == "firefox" else "Chrome"
         return {"success": self.success,
                 "confirmation": f"Pulled that up in {app}, sir."
                 if self.success else f"{app} ran into a problem, sir."}
 
-    async def open_terminal(self, command=""):
-        self.terminal.append(command)
+    async def terminal(self, *, cwd="", command=""):
+        self.terminals.append({"cwd": cwd, "command": command})
         return {"success": self.success,
                 "confirmation": "Terminal is open, sir."
                 if self.success else "I had trouble opening Terminal, sir."}
+
+    async def editor(self, path):
+        self.edited.append(str(path))
+        return {"success": self.success, "editor": "VS Code",
+                "confirmation": "Opened that in VS Code, sir."
+                if self.success else "VS Code wouldn't open that, sir."}
 
 
 @pytest.fixture
@@ -63,8 +79,8 @@ def ready(monkeypatch, tmp_path):
     (project / "index.html").write_text("<h1>Stark</h1>")
     (project / "styles.css").write_text("body{}")
 
-    fake = _Actions()
-    monkeypatch.setattr(server_module, "actions", fake)
+    fake = _Launcher()
+    monkeypatch.setattr(jp, "_HOST", fake_host(name="recording", launcher=fake))
     monkeypatch.setattr(server_module, "cached_projects",
                         [{"name": "tony-starks-website", "path": str(project)}])
     return server_module, fake, project
@@ -102,7 +118,7 @@ async def test_a_watcher_turn_cannot_open_anything(ready, monkeypatch):
                         json={"tool": "open_in_browser",
                               "arguments": {"target": "https://example.com"}})
     assert r.json()["ok"] is False
-    assert fake.browser == []
+    assert fake.opened == []
 
 
 # --- URLs -----------------------------------------------------------------
@@ -111,7 +127,7 @@ async def test_a_watcher_turn_cannot_open_anything(ready, monkeypatch):
 async def test_a_url_is_opened(ready):
     server, fake, _project = ready
     out = await server.tool_open_in_browser({"target": "https://example.com/x"})
-    assert fake.browser == ["https://example.com/x"]
+    assert fake.opened == ["https://example.com/x"]
     assert "Chrome" in out
 
 
@@ -125,7 +141,7 @@ async def test_a_url_is_opened(ready):
 async def test_only_web_addresses_are_opened_as_addresses(ready, target):
     server, fake, _project = ready
     out = await server.tool_open_in_browser({"target": target})
-    assert fake.browser == []
+    assert fake.opened == []
     assert "left alone" in out
 
 
@@ -136,7 +152,7 @@ async def test_a_bare_filename_resolves_against_the_named_project(ready):
     server, fake, project = ready
     out = await server.tool_open_in_browser(
         {"target": "index.html", "project": "tony-starks-website"})
-    assert fake.browser == [(project / "index.html").as_uri()]
+    assert fake.opened == [(project / "index.html").as_uri()]
     assert "index.html" in out and "tony-starks-website" in out
 
 
@@ -151,7 +167,7 @@ async def test_a_bare_filename_resolves_against_the_run_just_started(ready):
 
     await server.tool_open_in_browser({"target": "index.html"})
 
-    assert fake.browser == [(project / "index.html").as_uri()]
+    assert fake.opened == [(project / "index.html").as_uri()]
 
 
 @pytest.mark.asyncio
@@ -159,21 +175,21 @@ async def test_a_path_that_names_its_own_project_works(ready):
     server, fake, project = ready
     await server.tool_open_in_browser(
         {"target": "tony-starks-website/styles.css"})
-    assert fake.browser == [(project / "styles.css").as_uri()]
+    assert fake.opened == [(project / "styles.css").as_uri()]
 
 
 @pytest.mark.asyncio
 async def test_a_directory_opens_its_index(ready):
     server, fake, project = ready
     await server.tool_open_in_browser({"target": str(project)})
-    assert fake.browser == [(project / "index.html").as_uri()]
+    assert fake.opened == [(project / "index.html").as_uri()]
 
 
 @pytest.mark.asyncio
 async def test_with_no_project_in_sight_it_asks(ready):
     server, fake, _project = ready
     out = await server.tool_open_in_browser({"target": "index.html"})
-    assert fake.browser == []
+    assert fake.opened == []
     assert out.rstrip().endswith("?")
 
 
@@ -186,7 +202,7 @@ async def test_a_file_that_is_not_there_is_refused_not_faked(ready):
     server, fake, _project = ready
     out = await server.tool_open_in_browser(
         {"target": "about.html", "project": "tony-starks-website"})
-    assert fake.browser == []
+    assert fake.opened == []
     assert "no about.html" in out
     assert "opened nothing" in out
 
@@ -200,7 +216,7 @@ async def test_an_absolute_path_outside_every_project_is_refused(ready,
 
     out = await server.tool_open_in_browser({"target": str(outside)})
 
-    assert fake.browser == [], "nothing outside a project may be opened"
+    assert fake.opened == [], "nothing outside a project may be opened"
     assert "isn't inside a project I know" in out
 
 
@@ -212,7 +228,7 @@ async def test_a_traversal_out_of_a_project_is_refused(ready, tmp_path):
     out = await server.tool_open_in_browser(
         {"target": "../elsewhere.html", "project": "tony-starks-website"})
 
-    assert fake.browser == []
+    assert fake.opened == []
     assert "isn't inside a project I know" in out
 
 
@@ -229,7 +245,7 @@ async def test_a_symlink_pointing_out_of_the_project_is_refused(ready,
     out = await server.tool_open_in_browser(
         {"target": "innocent.html", "project": "tony-starks-website"})
 
-    assert fake.browser == []
+    assert fake.opened == []
     assert "isn't inside a project I know" in out
 
 
@@ -237,14 +253,16 @@ async def test_a_symlink_pointing_out_of_the_project_is_refused(ready,
 async def test_nothing_to_open_asks(ready):
     server, fake, _project = ready
     out = await server.tool_open_in_browser({"target": "  "})
-    assert fake.browser == []
+    assert fake.opened == []
     assert out.rstrip().endswith("?")
 
 
 @pytest.mark.asyncio
 async def test_a_browser_that_will_not_start_is_reported(ready, monkeypatch):
     server, _fake, project = ready
-    monkeypatch.setattr(server, "actions", _Actions(success=False))
+    monkeypatch.setattr(jp, "_HOST",
+                        fake_host(name="failing",
+                                  launcher=_Launcher(success=False)))
     out = await server.tool_open_in_browser(
         {"target": "index.html", "project": "tony-starks-website"})
     assert "problem" in out.lower() or "wouldn't open" in out.lower()
@@ -257,7 +275,7 @@ async def test_a_terminal_opens_in_the_project(ready):
     server, fake, project = ready
     out = await server.tool_open_in_terminal({"project": "tony-starks-website"})
     import shlex
-    assert fake.terminal == [f"cd {shlex.quote(str(project))}"]
+    assert fake.terminals == [{"cwd": str(project), "command": ""}]
     assert "tony-starks-website" in out
 
 
@@ -265,7 +283,7 @@ async def test_a_terminal_opens_in_the_project(ready):
 async def test_an_unknown_project_opens_no_terminal(ready):
     server, fake, _project = ready
     out = await server.tool_open_in_terminal({"project": "nowhere"})
-    assert fake.terminal == []
+    assert fake.terminals == []
     assert "don't see that project" in out
 
 
@@ -273,7 +291,7 @@ async def test_an_unknown_project_opens_no_terminal(ready):
 async def test_no_project_named_asks(ready):
     server, fake, _project = ready
     out = await server.tool_open_in_terminal({})
-    assert fake.terminal == []
+    assert fake.terminals == []
     assert out.rstrip().endswith("?")
 
 
@@ -329,7 +347,7 @@ async def test_a_browser_he_cannot_drive_is_refused_not_swapped(ready):
     server, fake, _project = ready
     out = await server.tool_open_in_browser({"target": "https://example.com",
                                              "browser": "Safari"})
-    assert fake.browser == [], "it opened something anyway"
+    assert fake.opened == [], "it opened something anyway"
     assert "Chrome or Firefox" in out
 
 
@@ -360,7 +378,7 @@ async def test_his_own_interface_is_not_opened_where_the_mic_is_dead(ready,
     server, fake, _project = ready
     monkeypatch.setenv("JARVIS_DEFAULT_BROWSER", "firefox")
     out = await server.tool_open_in_browser({"target": url})
-    assert fake.browser == [], "it opened his own UI where the mic is dead"
+    assert fake.opened == [], "it opened his own UI where the mic is dead"
     assert "Chrome" in out and "microphone" in out
 
 

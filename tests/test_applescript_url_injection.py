@@ -1,7 +1,7 @@
 """The URL that reaches `open location` is DATA, proved against a real
 AppleScript interpreter.
 
-`actions.open_browser` escaped `"` and not `\\`, thirty-eight lines below the
+The launcher's `browser` escaped `"` and not `\\`, thirty-eight lines below the
 helper that does both. That is not a theoretical hole: AppleScript reads
 `\\\\` as one literal backslash, so a URL ending `x\\"` closes the string
 literal and everything after it is CODE — and `do shell script` is in that
@@ -29,7 +29,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-import actions
+from jarvis_platform.macos import launcher as actions
 
 pytestmark = pytest.mark.skipif(sys.platform != "darwin",
                                 reason="osascript is macOS only")
@@ -123,7 +123,7 @@ async def test_a_hostile_url_cannot_escape_the_applescript_literal(
     marker = tmp_path / "pwned"
     url = _payload(marker)
 
-    await actions.open_browser(url, "chrome")
+    await actions.browser(url, "chrome")
 
     assert recorder.argv, "no osascript call was recorded"
     script = recorder.argv[0][2]
@@ -141,7 +141,7 @@ async def test_a_hostile_url_cannot_escape_the_applescript_literal(
 @pytest.mark.asyncio
 async def test_firefox_takes_the_same_route(recorder, tmp_path):
     marker = tmp_path / "pwned-firefox"
-    await actions.open_browser(_payload(marker), "firefox")
+    await actions.browser(_payload(marker), "firefox")
     script = recorder.argv[0][2]
     assert 'tell application "Firefox"' in script
     assert _run_applescript_with(_url_literal(script)).returncode == 0
@@ -153,7 +153,7 @@ async def test_open_browser_uses_the_one_escaping_helper(recorder):
     """Pinned by identity, not by behaviour: a second hand-rolled escape in
     this file is how the first one got here."""
     url = 'https://stark.example/a\\b"c'
-    await actions.open_browser(url, "chrome")
+    await actions.browser(url, "chrome")
     assert actions.applescript_escape(url) in recorder.argv[0][2]
 
 

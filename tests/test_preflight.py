@@ -16,6 +16,7 @@ import time
 
 import pytest
 
+import jarvis_platform.macos.screen
 import preflight
 from preflight import Check, STATUS_FAIL, STATUS_OK, STATUS_WARN
 
@@ -335,14 +336,14 @@ async def test_accessibility_skipped_off_darwin(monkeypatch):
 # it is worth saying at startup rather than at the moment he asks.
 
 def test_screen_recording_granted(monkeypatch):
-    monkeypatch.setattr(preflight.screen, "screen_recording_granted", lambda: True)
+    monkeypatch.setattr(jarvis_platform.macos.screen, "permission_granted", lambda: True)
     check = preflight._check_screen_recording_sync()
     assert check.status == STATUS_OK
     assert check.remedy is None
 
 
 def test_screen_recording_not_granted_is_fail_with_the_launching_app_remedy(monkeypatch):
-    monkeypatch.setattr(preflight.screen, "screen_recording_granted", lambda: False)
+    monkeypatch.setattr(jarvis_platform.macos.screen, "permission_granted", lambda: False)
     check = preflight._check_screen_recording_sync()
     assert check.status == STATUS_FAIL
     assert check.remedy
@@ -354,7 +355,7 @@ def test_screen_recording_undeterminable_is_warn_not_fail(monkeypatch):
     """None means the probe could not run -- off macOS, or a macOS that moved
     the symbol. Reporting that as a missing permission would send the user to
     a settings pane over nothing."""
-    monkeypatch.setattr(preflight.screen, "screen_recording_granted", lambda: None)
+    monkeypatch.setattr(jarvis_platform.macos.screen, "permission_granted", lambda: None)
     check = preflight._check_screen_recording_sync()
     assert check.status == STATUS_WARN
 
@@ -363,7 +364,7 @@ def test_screen_recording_check_never_raises(monkeypatch):
     def boom():
         raise RuntimeError("CoreGraphics went sideways")
 
-    monkeypatch.setattr(preflight.screen, "screen_recording_granted", boom)
+    monkeypatch.setattr(jarvis_platform.macos.screen, "permission_granted", boom)
     check = preflight._check_screen_recording_sync()
     assert check.status == STATUS_WARN
 
@@ -372,12 +373,12 @@ def test_the_startup_check_never_takes_a_picture(monkeypatch):
     """Preflight asks the OS a question. It does NOT capture the screen to
     find out -- that would be a screenshot the user never asked for, at every
     boot."""
-    monkeypatch.setattr(preflight.screen, "screen_recording_granted", lambda: True)
+    monkeypatch.setattr(jarvis_platform.macos.screen, "permission_granted", lambda: True)
 
     def forbidden(*a, **k):
         raise AssertionError("preflight captured the screen")
 
-    monkeypatch.setattr(preflight.screen, "capture_screen", forbidden)
+    monkeypatch.setattr(jarvis_platform.macos.screen, "capture", forbidden)
     assert preflight._check_screen_recording_sync().status == STATUS_OK
 
 

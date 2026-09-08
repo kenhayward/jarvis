@@ -819,6 +819,33 @@ def _error(rid, code: int, message: str) -> dict:
     return {"jsonrpc": "2.0", "id": rid, "error": {"code": code, "message": message}}
 
 
+def disabled_tools() -> set[str]:
+    """Tool names this machine cannot carry out, per the server that spawned us.
+
+    Arrives through the `env` block of mcp.json (server.py's
+    `_write_mcp_config`), which is the channel that already carries the
+    endpoint and the token path. This process imports nothing of JARVIS's —
+    stdlib only, deliberately — so an env var is how it learns anything, and
+    an absent variable means the ordinary case of a machine that can do
+    everything.
+    """
+    raw = os.environ.get("JARVIS_DISABLED_TOOLS", "")
+    return {name.strip() for name in raw.split(",") if name.strip()}
+
+
+def offered_tools() -> list[dict]:
+    """TOOL_SPECS minus whatever this platform cannot do.
+
+    Withdrawn rather than left in place to fail: a tool the brain is shown
+    costs roughly 250 tokens of schema on every single turn and invites an
+    attempt that can only end in an apology.
+    """
+    disabled = disabled_tools()
+    if not disabled:
+        return TOOL_SPECS
+    return [spec for spec in TOOL_SPECS if spec.get("name") not in disabled]
+
+
 def handle(msg: dict) -> dict | None:
     """One JSON-RPC message in, at most one reply out.
 
@@ -839,7 +866,7 @@ def handle(msg: dict) -> dict | None:
     elif method == "ping":
         reply = {"jsonrpc": "2.0", "id": rid, "result": {}}
     elif method == "tools/list":
-        reply = {"jsonrpc": "2.0", "id": rid, "result": {"tools": TOOL_SPECS}}
+        reply = {"jsonrpc": "2.0", "id": rid, "result": {"tools": offered_tools()}}
     elif method == "tools/call":
         params = msg.get("params") or {}
         name = params.get("name", "")

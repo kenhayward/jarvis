@@ -10,6 +10,8 @@ project's own known directories before handing it to `actions`.
 import importlib
 
 import pytest
+import jarvis_platform as jp
+from jarvis_platform.fake import fake_host
 from fastapi.testclient import TestClient
 
 import session_watch as sw
@@ -45,24 +47,24 @@ def _session(session_id, project, cwd, state=sw.IDLE):
         roster_name=project, voice_name=project, steerable=True, since=10.0)
 
 
-class _Actions:
+class _Launcher:
     def __init__(self, success=True):
-        self.editor: list[str] = []
-        self.terminal: list[str] = []
-        self.browser: list[str] = []
+        self.edited: list[str] = []
+        self.terminals: list[dict] = []
+        self.opened: list[str] = []
         self.success = success
 
-    async def open_in_editor(self, path):
-        self.editor.append(path)
+    async def editor(self, path):
+        self.edited.append(path)
         return {"success": self.success, "editor": "VS Code",
                 "confirmation": "Opened, sir."}
 
-    async def open_terminal(self, command=""):
-        self.terminal.append(command)
+    async def terminal(self, *, cwd="", command=""):
+        self.terminals.append({"cwd": cwd, "command": command})
         return {"success": self.success, "confirmation": "Terminal's open, sir."}
 
-    async def open_browser(self, url, browser="chrome"):
-        self.browser.append(url)
+    async def browser(self, url, which="chrome"):
+        self.opened.append(url)
         return {"success": self.success, "confirmation": "Opened, sir."}
 
 
@@ -161,69 +163,69 @@ def test_detail_returns_repo_and_build_summaries(wired, tmp_path):
 
 def test_open_rejects_a_path_not_belonging_to_the_project(wired, monkeypatch):
     server, _store = wired
-    fake = _Actions()
+    fake = _Launcher()
     with TestClient(server.app, headers=BROWSER) as c:
-        monkeypatch.setattr(server, "actions", fake)
+        monkeypatch.setattr(jp, "_HOST", fake_host(launcher=fake))
         server.session_watcher = _Watcher([_session("s1", "chitauri", "/p/chitauri")])
         r = c.post("/api/projects/open",
                    json={"name": "chitauri", "path": "/etc/passwd", "target": "editor"})
     assert r.status_code == 400
-    assert fake.editor == []
+    assert fake.edited == []
 
 
 def test_open_rejects_an_unknown_project(wired, monkeypatch):
     server, _store = wired
-    fake = _Actions()
+    fake = _Launcher()
     with TestClient(server.app, headers=BROWSER) as c:
-        monkeypatch.setattr(server, "actions", fake)
+        monkeypatch.setattr(jp, "_HOST", fake_host(launcher=fake))
         r = c.post("/api/projects/open",
                    json={"name": "nope", "path": "/p", "target": "editor"})
     assert r.status_code == 400
-    assert fake.editor == []
+    assert fake.edited == []
 
 
 def test_open_in_editor_calls_actions(wired, monkeypatch):
     server, _store = wired
-    fake = _Actions()
+    fake = _Launcher()
     with TestClient(server.app, headers=BROWSER) as c:
-        monkeypatch.setattr(server, "actions", fake)
+        monkeypatch.setattr(jp, "_HOST", fake_host(launcher=fake))
         server.session_watcher = _Watcher([_session("s1", "chitauri", "/p/chitauri")])
         r = c.post("/api/projects/open",
                    json={"name": "chitauri", "path": "/p/chitauri", "target": "editor"})
     assert r.status_code == 200
     assert r.json()["success"] is True
-    assert fake.editor == ["/p/chitauri"]
+    assert fake.edited == ["/p/chitauri"]
 
 
 def test_open_in_terminal_calls_actions(wired, monkeypatch):
     server, _store = wired
-    fake = _Actions()
+    fake = _Launcher()
     with TestClient(server.app, headers=BROWSER) as c:
-        monkeypatch.setattr(server, "actions", fake)
+        monkeypatch.setattr(jp, "_HOST", fake_host(launcher=fake))
         server.session_watcher = _Watcher([_session("s1", "chitauri", "/p/chitauri")])
         r = c.post("/api/projects/open",
                    json={"name": "chitauri", "path": "/p/chitauri", "target": "terminal"})
     assert r.status_code == 200
-    assert fake.terminal == ["cd /p/chitauri"]
+    assert fake.terminals == [{"cwd": "/p/chitauri", "command": ""}]
 
 
 def test_open_in_browser_calls_actions_with_a_file_uri(wired, monkeypatch):
     server, _store = wired
-    fake = _Actions()
+    fake = _Launcher()
     with TestClient(server.app, headers=BROWSER) as c:
-        monkeypatch.setattr(server, "actions", fake)
+        monkeypatch.setattr(jp, "_HOST", fake_host(launcher=fake))
         server.session_watcher = _Watcher([_session("s1", "chitauri", "/p/chitauri")])
         r = c.post("/api/projects/open",
                    json={"name": "chitauri", "path": "/p/chitauri", "target": "browser"})
     assert r.status_code == 200
-    assert fake.browser == ["file:///p/chitauri"]
+    assert fake.opened == ["file:///p/chitauri"]
 
 
 def test_open_reports_actions_failure(wired, monkeypatch):
     server, _store = wired
-    fake = _Actions(success=False)
+    fake = _Launcher(success=False)
     with TestClient(server.app, headers=BROWSER) as c:
-        monkeypatch.setattr(server, "actions", fake)
+        monkeypatch.setattr(jp, "_HOST", fake_host(launcher=fake))
         server.session_watcher = _Watcher([_session("s1", "chitauri", "/p/chitauri")])
         r = c.post("/api/projects/open",
                    json={"name": "chitauri", "path": "/p/chitauri", "target": "editor"})

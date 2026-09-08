@@ -32,19 +32,21 @@ import time
 from pathlib import Path
 
 import pytest
+import jarvis_platform as jp
+from jarvis_platform.fake import fake_host
 
 import repo_read
 
 
-class _Actions:
-    """Stands in for actions.py. Records, never launches."""
+class _Launcher:
+    """A recording Launcher. Records, never launches."""
 
     def __init__(self, success=True):
-        self.editor: list[str] = []
+        self.edited: list[str] = []
         self.success = success
 
-    async def open_in_editor(self, path):
-        self.editor.append(str(path))
+    async def editor(self, path):
+        self.edited.append(str(path))
         return {"success": self.success, "editor": "VS Code",
                 "confirmation": "Opened that in VS Code, sir."
                 if self.success else "VS Code wouldn't open that, sir."}
@@ -83,8 +85,8 @@ def ready(monkeypatch, tmp_path):
     (project / ".env").write_text("API_KEY=sk-live-do-not-read-me\n")
     (project / ".env.example").write_text("API_KEY=\n")
 
-    fake = _Actions()
-    monkeypatch.setattr(server_module, "actions", fake)
+    fake = _Launcher()
+    monkeypatch.setattr(jp, "_HOST", fake_host(launcher=fake))
     monkeypatch.setattr(server_module, "cached_projects",
                         [{"name": "chitauri", "path": str(project)}])
     return server_module, fake, project
@@ -147,7 +149,7 @@ async def test_a_watcher_turn_cannot_open_an_editor(ready, monkeypatch):
                               json={"tool": "repo_overview",
                                     "arguments": {"project": "chitauri"}})
     assert blocked.json()["ok"] is False
-    assert fake.editor == []
+    assert fake.edited == []
     assert allowed.json()["ok"] is True
 
 
@@ -594,7 +596,7 @@ async def test_the_project_itself_opens_with_no_path(ready):
     server, fake, project = ready
     out = await server.tool_open_in_editor({"project": "chitauri"})
     import os
-    assert fake.editor == [os.path.realpath(str(project))]
+    assert fake.edited == [os.path.realpath(str(project))]
     assert "chitauri" in out and "VS Code" in out
 
 
@@ -604,7 +606,7 @@ async def test_one_file_opens(ready):
     out = await server.tool_open_in_editor({"project": "chitauri",
                                             "path": "src/auth.ts"})
     import os
-    assert fake.editor == [os.path.realpath(str(project / "src" / "auth.ts"))]
+    assert fake.edited == [os.path.realpath(str(project / "src" / "auth.ts"))]
     assert "src/auth.ts" in out
 
 
@@ -613,7 +615,7 @@ async def test_opening_a_file_that_is_not_there_is_not_faked(ready):
     server, fake, _project = ready
     out = await server.tool_open_in_editor({"project": "chitauri",
                                             "path": "src/nope.ts"})
-    assert fake.editor == []
+    assert fake.edited == []
     assert "opened nothing" in out
 
 
@@ -625,7 +627,7 @@ async def test_the_editor_will_not_open_something_outside_the_project(ready,
     outside.write_text("x")
     out = await server.tool_open_in_editor({"project": "chitauri",
                                             "path": str(outside)})
-    assert fake.editor == []
+    assert fake.edited == []
     assert out == server.REPO_OUTSIDE_REFUSAL.format(name="chitauri")
 
 
@@ -634,14 +636,15 @@ async def test_the_editor_will_not_open_a_secret(ready):
     server, fake, _project = ready
     out = await server.tool_open_in_editor({"project": "chitauri",
                                             "path": ".env"})
-    assert fake.editor == []
+    assert fake.edited == []
     assert out == server.REPO_SENSITIVE_REFUSAL
 
 
 @pytest.mark.asyncio
 async def test_an_editor_that_will_not_start_is_reported(ready, monkeypatch):
     server, _fake, _project = ready
-    monkeypatch.setattr(server, "actions", _Actions(success=False))
+    monkeypatch.setattr(jp, "_HOST",
+                        fake_host(launcher=_Launcher(success=False)))
     out = await server.tool_open_in_editor({"project": "chitauri"})
     assert "wouldn't open" in out
 
@@ -649,13 +652,13 @@ async def test_an_editor_that_will_not_start_is_reported(ready, monkeypatch):
 def test_vs_code_is_preferred_but_not_required(monkeypatch):
     """Falls back to the system default, so this works on a Mac that has
     never had VS Code installed."""
-    import actions
-    monkeypatch.setattr(actions.shutil, "which", lambda name: None)
-    monkeypatch.setattr(actions.os.path, "isdir", lambda p: False)
-    assert actions._vscode_command("/tmp/x") is None
+    from jarvis_platform.macos import launcher
+    monkeypatch.setattr(launcher.shutil, "which", lambda name: None)
+    monkeypatch.setattr(launcher.os.path, "isdir", lambda p: False)
+    assert launcher._vscode_command("/tmp/x") is None
 
-    monkeypatch.setattr(actions.shutil, "which", lambda name: "/usr/bin/code")
-    assert actions._vscode_command("/tmp/x") == ["/usr/bin/code", "/tmp/x"]
+    monkeypatch.setattr(launcher.shutil, "which", lambda name: "/usr/bin/code")
+    assert launcher._vscode_command("/tmp/x") == ["/usr/bin/code", "/tmp/x"]
 
 
 # --- the cap, through the real channel ------------------------------------

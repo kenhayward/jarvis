@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Awaitable, Callable, Optional
 
 import claude_env
+import jarvis_platform
 import usage_store
 
 log = logging.getLogger("jarvis.brain")
@@ -34,6 +35,11 @@ log = logging.getLogger("jarvis.brain")
 # fixed here and nowhere else for a whole milestone.
 SCRUBBED_ENV_PREFIXES = claude_env.SCRUBBED_ENV_PREFIXES
 SCRUBBED_ENV_KEYS = claude_env.SCRUBBED_ENV_KEYS
+
+# The namespace JARVIS's own tools arrive under. A grant outside it is
+# the CLI's own or a user's declared server, and neither is ours to
+# withdraw on platform grounds.
+_JARVIS_TOOL_PREFIX = "mcp__jarvis__"
 
 # ALLOWLIST (`--tools`), not a denylist: anything a future CLI adds is off by
 # default. The MCP tools are namespaced `mcp__<server>__<tool>`.
@@ -115,8 +121,25 @@ ALLOWED_TOOLS = [
 # `--tools` over MCP names again, a user's declared server keeps working
 # instead of going silently dead.
 def granted_tools(connections: list[str]) -> list[str]:
-    """ALLOWED_TOOLS plus one whole-server grant per declared connection."""
-    return ALLOWED_TOOLS + [f"mcp__{name}" for name in connections]
+    """ALLOWED_TOOLS plus one whole-server grant per declared connection,
+    minus anything this platform cannot do.
+
+    The withdrawal happens here rather than by editing ALLOWED_TOOLS because
+    ALLOWED_TOOLS is the statement of what JARVIS offers, and that does not
+    change with the machine — what changes is what this machine can carry
+    out. Keeping the two apart means the list above stays readable as intent
+    and `jarvis_platform.TOOL_CAPABILITIES` stays the single answer to "does
+    this work here".
+
+    A withdrawn tool is never described to the brain at all: no schema on
+    any turn, nothing to attempt, nothing to apologise for. See
+    `jarvis_platform.base` for why that is preferred to a handler that
+    returns "not supported".
+    """
+    allowed = [t for t in ALLOWED_TOOLS
+               if not t.startswith(_JARVIS_TOOL_PREFIX)
+               or jarvis_platform.allows_tool(t[len(_JARVIS_TOOL_PREFIX):])]
+    return allowed + [f"mcp__{name}" for name in connections]
 
 # Tools whose results put text from the open web into the brain's context. A
 # turn that has used one may not also act unsupervised (server.py gates it);

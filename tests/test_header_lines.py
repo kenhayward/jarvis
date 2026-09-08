@@ -717,7 +717,8 @@ def _drive_tty_or_explain(server, session, monkeypatch):
     async def _none(pid):
         return ""
 
-    monkeypatch.setattr(server.dialog, "tty_for_pid_async", _none)
+    from jarvis_platform.macos import dialogs
+    monkeypatch.setattr(dialogs, "terminal_of", _none)
     s = _clone(session)
     s.pids = [11, 22]
     out.append(asyncio.run(server._tty_for_session_or_explain(s))[2] or "")
@@ -727,7 +728,8 @@ def _drive_tty_or_explain(server, session, monkeypatch):
     async def _two(pid):
         return ttys[pid]
 
-    monkeypatch.setattr(server.dialog, "tty_for_pid_async", _two)
+    from jarvis_platform.macos import dialogs
+    monkeypatch.setattr(dialogs, "terminal_of", _two)
     out.append(asyncio.run(server._tty_for_session_or_explain(s))[2] or "")
     return out
 
@@ -829,9 +831,11 @@ def _drive_perform_dialog(server, session, monkeypatch):
 
     monkeypatch.setattr(server.run_store, "record_steer", lambda *a, **k: None)
     said = []
-    outcomes = [server.dialog.SENT, server.dialog.NOT_FOUND,
-                server.dialog.NOT_PERMITTED, server.dialog.NO_TTY,
-                server.dialog.FAILED]
+    from jarvis_platform import base
+    from jarvis_platform.macos import dialogs
+    outcomes = [base.SENT, base.NOT_FOUND,
+                base.NOT_PERMITTED, base.NO_TERMINAL,
+                base.FAILED]
     for outcome in outcomes:
         speech = _Speech()
         monkeypatch.setattr(server, "speech", speech)
@@ -839,7 +843,7 @@ def _drive_perform_dialog(server, session, monkeypatch):
         async def _answer(pid, key, _o=outcome):
             return _o
 
-        monkeypatch.setattr(server.dialog, "answer", _answer)
+        monkeypatch.setattr(dialogs, "answer", _answer)
         item = server._StagedDialog(session_id=session.session_id,
                                     voice_name=session.voice_name,
                                     project=session.project, pid=7,
@@ -1316,7 +1320,8 @@ def test_open_in_terminal_never_speaks_a_hostile_directory_name(server, monkeypa
 
     async def _opened(*a, **k):
         return {"success": True}
-    monkeypatch.setattr(server.actions, "open_terminal", _opened)
+    from jarvis_platform.macos import launcher
+    monkeypatch.setattr(launcher, "terminal", _opened)
     out = asyncio.run(server.tool_open_in_terminal({"project": "notes"}))
     assert_header_is_jarviss_own(out)
     assert MARKER not in out

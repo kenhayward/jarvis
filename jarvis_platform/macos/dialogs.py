@@ -39,15 +39,14 @@ import re
 import shutil
 from dataclasses import dataclass
 
-log = logging.getLogger("jarvis.dialog")
+from ..base import (BAD_KEY, FAILED, NOT_FOUND, NOT_PERMITTED,
+                    NO_TERMINAL, SENT, normalize_key)
 
-# --- outcomes ---------------------------------------------------------------
-SENT = "sent"
-NO_TTY = "no_tty"           # the pid is dead, or has no controlling terminal
-NOT_FOUND = "not_found"     # no Terminal.app tab owns that tty (another host)
-NOT_PERMITTED = "not_permitted"   # macOS Accessibility/automation refused us
-FAILED = "failed"           # osascript died, timed out, or said something odd
-BAD_KEY = "bad_key"         # defensive: a key outside the closed vocabulary
+log = logging.getLogger("jarvis.platform.dialogs")
+
+# The outcomes and the closed key vocabulary are in `jarvis_platform.base`:
+# they are the protocol, not this implementation of it, and a second
+# implementation does not get to widen either. Imported above.
 
 # How long an osascript may run before we stop waiting and kill it. A hung
 # osascript (a modal sheet on Terminal, a permission dialog nobody answers)
@@ -57,29 +56,15 @@ SEND_TIMEOUT = 20.0
 
 # How long `ps` and `pgrep` may take. Both are local, answer in milliseconds,
 # and are only ever consulted to decide whether to do nothing — so a long
-# ceiling buys nothing and costs a great deal. server.py's
-# `_tty_for_session_or_explain` is still SYNCHRONOUS and calls `tty_for_pid`
-# once per pid on the voice loop; at the old 5s ceiling a five-process
-# session was up to twenty-five seconds of frozen microphone. This bounds
-# that until that caller can be made async (see `tty_for_pid_async`).
+# ceiling buys nothing and costs a great deal. server.py's caller runs one
+# `ps` per pid and a session can have many; at the old 5s ceiling a
+# five-process session was up to twenty-five seconds of frozen microphone.
 _PS_TIMEOUT = 1.0
 
 # The closed vocabulary. `key code` numbers rather than `keystroke return`,
 # because a key code is unambiguous and cannot be reinterpreted as text.
 _RETURN_KEY_CODE = 36
 _ESCAPE_KEY_CODE = 53
-
-_ALIASES = {
-    "enter": "return",
-    "return": "return",
-    "yes": "return",       # "yes" answers a permission prompt with Return
-    "y": "return",
-    "escape": "escape",
-    "esc": "escape",
-    "cancel": "escape",
-    "no": "escape",
-    "n": "escape",
-}
 
 # Substrings macOS uses when it is Accessibility/automation refusing us, not
 # a bug in the script. Each is distinctive enough that it cannot match the
@@ -101,27 +86,6 @@ class TerminalTab:
     window_id: int
     tab_index: int
     tty: str
-
-
-def normalize_key(key) -> str | None:
-    """The closed vocabulary, or None. None means REFUSE — never interpret.
-
-    Returns "return", "escape", or a single digit "1".."9". Anything else,
-    including free text that merely starts with an accepted word, is None.
-    """
-    if not isinstance(key, str):
-        return None
-    k = key.strip().lower()
-    if k in _ALIASES:
-        return _ALIASES[k]
-    if len(k) == 1 and k in "123456789":
-        return k
-    return None
-
-
-def spoken_key(normalized: str) -> str:
-    """How the read-back names the key. Must match what actually gets sent."""
-    return {"return": "Return", "escape": "Escape"}.get(normalized, normalized)
 
 
 def normalize_tty(tty: str | None) -> str | None:
@@ -165,6 +129,16 @@ def tty_for_pid(pid) -> str | None:
     if out.returncode != 0:
         return None                      # ps exits non-zero for a dead pid
     return normalize_tty(out.stdout.strip())
+
+
+async def terminal_of(pid) -> str | None:
+    """The `Dialogs.terminal_of` half of the protocol.
+
+    On macOS the opaque terminal identity IS the controlling tty, so this
+    is `tty_for_pid_async` under the name the protocol uses. Callers only
+    ever compare the value; nothing outside this module may parse it.
+    """
+    return await tty_for_pid_async(pid)
 
 
 async def tty_for_pid_async(pid) -> str | None:
@@ -363,7 +337,7 @@ async def answer(pid: int, key: str) -> str:
     try:
         tty = await tty_for_pid_async(pid)
         if tty is None:
-            return NO_TTY
+            return NO_TERMINAL
         tab = await find_terminal_tab(tty)
         if tab is None:
             # Another application hosts this tty. Press nothing.

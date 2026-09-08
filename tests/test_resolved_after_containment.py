@@ -217,7 +217,8 @@ def _opened(server, monkeypatch) -> list:
         opened.append(url)
         return {"success": True, "confirmation": "ok"}
 
-    monkeypatch.setattr(server.actions, "open_browser", _open)
+    from jarvis_platform.macos import launcher
+    monkeypatch.setattr(launcher, "browser", _open)
     return opened
 
 

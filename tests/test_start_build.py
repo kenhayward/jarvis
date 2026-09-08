@@ -712,16 +712,16 @@ class _FakeSpeech:
 
 @pytest.fixture
 def terminal(monkeypatch):
-    """No test may open a real Terminal window. Patched on the `actions`
-    module object, so a server reload cannot hand the real one back."""
-    import actions
+    """No test may open a real Terminal window. Patched on the launcher
+    MODULE object, so a server reload cannot hand the real one back."""
+    from jarvis_platform.macos import launcher
     opened: list[str] = []
 
-    async def fake_open_terminal(command=""):
-        opened.append(command)
+    async def fake_terminal(*, cwd="", command=""):
+        opened.append({"cwd": cwd, "command": command})
         return {"success": True, "confirmation": "Terminal is open, sir."}
 
-    monkeypatch.setattr(actions, "open_terminal", fake_open_terminal)
+    monkeypatch.setattr(launcher, "terminal", fake_terminal)
     return opened
 
 
@@ -763,8 +763,8 @@ async def test_performing_the_command_reads_it_back_before_running_it(
     assert "npm run dev" in speech.said[0]
     assert "chitauri" in speech.said[0]
     assert len(terminal) == 1
-    assert terminal[0].endswith("&& npm run dev")
-    assert str(project) in terminal[0], "it runs in the project directory"
+    assert terminal[0]["command"] == "npm run dev"
+    assert terminal[0]["cwd"] == str(project), "it runs in the project directory"
     assert store.list_steers(limit=5)[0]["outcome"] == "ran"
     assert server._staged_steers == []
 

@@ -34,18 +34,20 @@ def _never_really_synthesise(monkeypatch):
 def _never_post_a_real_notification(monkeypatch, request):
     """No test may spam the developer's Notification Centre.
 
-    Patched on the `notifier` module object itself rather than on `server`, so
-    the `importlib.reload(server_module)` that several test fixtures do cannot
-    hand the real implementation back. test_notifier.py is exempt: it tests
-    notify() itself and mocks the subprocess boundary directly.
+    Patched on the notifications MODULE object rather than on `server` or on
+    the host, so the `importlib.reload(server_module)` that several test
+    fixtures do cannot hand the real implementation back. That is also why
+    the macOS host exposes modules rather than class instances.
+    test_notifier.py is exempt: it tests notify() itself and mocks the
+    subprocess boundary directly.
     """
     if request.module.__name__.endswith("test_notifier"):
         return
-    import notifier
+    from jarvis_platform.macos import notifications as notifier
 
     async def _blocked(*args, **kwargs):
         raise AssertionError("a test tried to post a real macOS notification; "
-                             "mock notifier.notify")
+                             "mock jarvis_platform.macos.notifications.notify")
 
     monkeypatch.setattr(notifier, "notify", _blocked)
 

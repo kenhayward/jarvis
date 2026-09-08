@@ -1,17 +1,24 @@
-"""
-JARVIS Action Executor — AppleScript-based system actions.
+"""macOS launching: a Terminal window, a browser, an editor.
 
-Execute actions IMMEDIATELY, before generating any LLM response.
-Each function returns {"success": bool, "confirmation": str}.
+Everything here drives AppleScript, and every script is composed here
+rather than by the caller — including the `cd` the terminal needs. That
+is not tidiness: quoting a path is a property of the shell you are
+quoting FOR, and `shlex.quote` is POSIX. Leaving it at the call site
+meant three copies of it in server.py, each of which would have to be
+found and corrected for cmd.exe or PowerShell. One launcher owns its own
+quoting.
+
+Reached as `jarvis_platform.current().launcher`. Actions run IMMEDIATELY;
+each returns {"success": bool, "confirmation": str}.
 """
 
 import asyncio
 import logging
 import os
-import re
+import shlex
 import shutil
 
-log = logging.getLogger("jarvis.actions")
+log = logging.getLogger("jarvis.platform.launcher")
 
 async def _mark_terminal_as_jarvis(revert_after: float = 5.0):
     """Temporarily set the front Terminal window to Ocean theme, then revert.
@@ -80,10 +87,23 @@ def applescript_escape(s: str) -> str:
     return s.replace("\\", "\\\\").replace('"', '\\"').replace("\r", "").replace("\n", " ")
 
 
-async def open_terminal(command: str = "") -> dict:
-    """Open Terminal.app and optionally run a command. Marks it blue for JARVIS."""
+async def terminal(*, cwd: str = "", command: str = "") -> dict:
+    """Open Terminal.app at `cwd`, optionally running `command`. Marks it blue.
+
+    The `cd` is composed here, not by the caller. `cwd` is quoted with
+    `shlex.quote` because this is a POSIX shell; `command` is NOT, and must
+    not be — a start command is meant to be a command. Its callers have
+    already put it through `builds.command_problem`, which permits no shell
+    metacharacter at all.
+    """
+    line = ""
+    if cwd:
+        line = f"cd {shlex.quote(cwd)}"
     if command:
-        escaped = applescript_escape(command)
+        line = f"{line} && {command}" if line else command
+
+    if line:
+        escaped = applescript_escape(line)
         script = (
             'tell application "Terminal"\n'
             "    activate\n"
@@ -104,7 +124,7 @@ async def open_terminal(command: str = "") -> dict:
     _, stderr = await proc.communicate()
     success = proc.returncode == 0
     if not success:
-        log.error(f"open_terminal failed: {stderr.decode()}")
+        log.error(f"terminal failed: {stderr.decode()}")
     else:
         await _mark_terminal_as_jarvis()
     return {
@@ -113,7 +133,7 @@ async def open_terminal(command: str = "") -> dict:
     }
 
 
-async def open_browser(url: str, browser: str = "chrome") -> dict:
+async def browser(url: str, which: str = "chrome") -> dict:
     """Open URL in user's browser (Chrome or Firefox).
 
     The URL goes through `applescript_escape` and nothing else. A hand-rolled
@@ -127,7 +147,7 @@ async def open_browser(url: str, browser: str = "chrome") -> dict:
     """
     escaped_url = applescript_escape(url)
 
-    if browser.lower() == "firefox":
+    if which.lower() == "firefox":
         app_name = "Firefox"
         script = (
             'tell application "Firefox"\n'
@@ -152,43 +172,11 @@ async def open_browser(url: str, browser: str = "chrome") -> dict:
     _, stderr = await proc.communicate()
     success = proc.returncode == 0
     if not success:
-        log.error(f"open_browser ({app_name}) failed: {stderr.decode()}")
+        log.error(f"browser ({app_name}) failed: {stderr.decode()}")
     return {
         "success": success,
         "confirmation": f"Pulled that up in {app_name}, sir." if success else f"{app_name} ran into a problem, sir.",
     }
-
-
-# Keep backward compat
-async def open_chrome(url: str) -> dict:
-    return await open_browser(url, "chrome")
-
-
-async def get_chrome_tab_info() -> dict:
-    """Read the current Chrome tab's title and URL via AppleScript."""
-    script = (
-        'tell application "Google Chrome"\n'
-        "    set tabTitle to title of active tab of front window\n"
-        "    set tabURL to URL of active tab of front window\n"
-        '    return tabTitle & "|" & tabURL\n'
-        "end tell"
-    )
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            "osascript", "-e", script,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        stdout, _ = await proc.communicate()
-        if proc.returncode == 0:
-            result = stdout.decode().strip()
-            parts = result.split("|", 1)
-            if len(parts) == 2:
-                return {"title": parts[0], "url": parts[1]}
-        return {}
-    except Exception as e:
-        log.warning(f"get_chrome_tab_info failed: {e}")
-        return {}
 
 
 # --- Opening code where the user actually reads it -----------------------
@@ -216,7 +204,7 @@ def _vscode_command(path: str) -> list[str] | None:
     return None
 
 
-async def open_in_editor(path: str) -> dict:
+async def editor(path: str) -> dict:
     """Open a file or directory in VS Code, else in the system default."""
     argv = _vscode_command(path)
     editor = "VS Code"
@@ -233,43 +221,15 @@ async def open_in_editor(path: str) -> dict:
         _, stderr = await proc.communicate()
         success = proc.returncode == 0
     except OSError as e:
-        log.error(f"open_in_editor could not launch: {e}")
+        log.error(f"editor could not launch: {e}")
         return {"success": False, "editor": editor,
                 "confirmation": "I couldn't open an editor, sir."}
 
     if not success:
-        log.error(f"open_in_editor failed: {stderr.decode(errors='replace')}")
+        log.error(f"editor failed: {stderr.decode(errors='replace')}")
     return {
         "success": success,
         "editor": editor,
         "confirmation": f"Opened that in {editor}, sir." if success
         else f"{editor} wouldn't open that, sir.",
     }
-
-
-def _generate_project_name(prompt: str) -> str:
-    """Generate a kebab-case project folder name from the prompt."""
-    # First: check for a quoted name like "tiktok-analytics-dashboard"
-    quoted = re.search(r'"([^"]+)"', prompt)
-    if quoted:
-        name = quoted.group(1).strip()
-        # Already kebab-case or close to it
-        name = re.sub(r"[^a-zA-Z0-9\s-]", "", name).strip()
-        if name:
-            return re.sub(r"[\s]+", "-", name.lower())
-
-    # Second: check for "called X" or "named X" pattern
-    called = re.search(r'(?:called|named)\s+(\S+(?:[-_]\S+)*)', prompt, re.IGNORECASE)
-    if called:
-        name = re.sub(r"[^a-zA-Z0-9-]", "", called.group(1))
-        if len(name) > 3:
-            return name.lower()
-
-    # Fallback: extract meaningful words
-    words = re.sub(r"[^a-zA-Z0-9\s]", "", prompt.lower()).split()
-    skip = {"a", "the", "an", "me", "build", "create", "make", "for", "with", "and",
-            "to", "of", "i", "want", "need", "new", "project", "directory", "called",
-            "on", "desktop", "that", "application", "app", "full", "stack", "simple",
-            "web", "page", "site", "named"}
-    meaningful = [w for w in words if w not in skip and len(w) > 2][:4]
-    return "-".join(meaningful) if meaningful else "jarvis-project"
