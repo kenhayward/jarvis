@@ -49,7 +49,7 @@ def test_ensure_brain_home_seeds_the_template_and_spares_an_edit(monkeypatch, tm
     claude_md = home / "CLAUDE.md"
     assert claude_md.exists()
     assert "JARVIS" in claude_md.read_text(encoding="utf-8")
-    claude_md.write_text("user edited")
+    claude_md.write_text("user edited", encoding="utf-8", newline="\n")
     data_paths.ensure_brain_home()
     assert claude_md.read_text(encoding="utf-8") == "user edited"   # never overwritten
 
@@ -77,6 +77,15 @@ def _fresh(monkeypatch, tmp_path):
     return data_paths
 
 
+# The writes below pass newline="\n" because they are standing in for
+# files JARVIS WROTE, and the assertions hash the text handed in and
+# compare it against the bytes read back. `write_text` uses text mode,
+# which translates "\n" to "\r\n" on Windows -- so without this the
+# bytes never equal the hash, every simulated file reads as user-edited,
+# and the tests for "an unedited old persona is updated" test the
+# opposite of what they say. `_write_atomically` pins the same newline
+# for the same reason.
+
 def _template_text() -> str:
     return (Path(__file__).parent.parent / "jarvis_home" / "CLAUDE.md").read_text(encoding="utf-8")
 
@@ -101,8 +110,8 @@ def test_an_unedited_older_persona_is_brought_up_to_date(monkeypatch, tmp_path):
     dp = _fresh(monkeypatch, tmp_path)
     dp.sync_persona()
     old = "# JARVIS\n\nAn older shipped persona.\n"
-    dp.persona_path().write_text(old)
-    dp.persona_seed_path().write_text(json.dumps({"sha256": _sha(old)}))
+    dp.persona_path().write_text(old, encoding="utf-8", newline="\n")
+    dp.persona_seed_path().write_text(json.dumps({"sha256": _sha(old)}), encoding="utf-8", newline="\n")
 
     assert dp.sync_persona() == "updated"
     assert dp.persona_path().read_text(encoding="utf-8") == _template_text()
@@ -115,7 +124,7 @@ def test_an_edited_persona_is_never_overwritten_and_names_both_files(
     dp = _fresh(monkeypatch, tmp_path)
     dp.sync_persona()
     mine = _template_text() + "\n\nAlways call me Captain.\n"
-    dp.persona_path().write_text(mine)
+    dp.persona_path().write_text(mine, encoding="utf-8", newline="\n")
 
     with caplog.at_level("WARNING"):
         assert dp.sync_persona() == "kept"
@@ -156,7 +165,7 @@ def test_first_run_updates_a_persona_it_can_prove_is_a_shipped_template(
     dp = _fresh(monkeypatch, tmp_path)
     old = "# JARVIS\n\nThe persona as it shipped in some earlier release.\n"
     dp.brain_home().mkdir(parents=True, exist_ok=True)
-    dp.persona_path().write_text(old)
+    dp.persona_path().write_text(old, encoding="utf-8", newline="\n")
     monkeypatch.setattr(dp, "KNOWN_TEMPLATE_HASHES", frozenset({_sha(old)}))
 
     assert dp.sync_persona() == "updated"
@@ -171,7 +180,7 @@ def test_first_run_keeps_a_persona_it_cannot_recognise(monkeypatch, tmp_path):
     dp = _fresh(monkeypatch, tmp_path)
     mine = "# JARVIS\n\nRules I wrote myself before the upgrade.\n"
     dp.brain_home().mkdir(parents=True, exist_ok=True)
-    dp.persona_path().write_text(mine)
+    dp.persona_path().write_text(mine, encoding="utf-8", newline="\n")
 
     assert dp.sync_persona() == "kept"
     assert dp.persona_path().read_text(encoding="utf-8") == mine
@@ -183,8 +192,8 @@ def test_an_unreadable_record_is_treated_as_no_record(monkeypatch, tmp_path):
     dp = _fresh(monkeypatch, tmp_path)
     dp.sync_persona()
     mine = "# JARVIS\n\nMy own rules.\n"
-    dp.persona_path().write_text(mine)
-    dp.persona_seed_path().write_text("{not json at all")
+    dp.persona_path().write_text(mine, encoding="utf-8", newline="\n")
+    dp.persona_seed_path().write_text("{not json at all", encoding="utf-8", newline="\n")
 
     assert dp.sync_persona() == "kept"
     assert dp.persona_path().read_text(encoding="utf-8") == mine
@@ -196,8 +205,8 @@ def test_ensure_brain_home_runs_the_sync(monkeypatch, tmp_path):
     dp = _fresh(monkeypatch, tmp_path)
     dp.sync_persona()
     old = "# JARVIS\n\nolder\n"
-    dp.persona_path().write_text(old)
-    dp.persona_seed_path().write_text(json.dumps({"sha256": _sha(old)}))
+    dp.persona_path().write_text(old, encoding="utf-8", newline="\n")
+    dp.persona_seed_path().write_text(json.dumps({"sha256": _sha(old)}), encoding="utf-8", newline="\n")
     dp.ensure_brain_home()
     assert dp.persona_path().read_text(encoding="utf-8") == _template_text()
 
@@ -227,7 +236,17 @@ def test_every_template_this_project_has_shipped_is_listed(monkeypatch, tmp_path
         digest = hashlib.sha256(blob).hexdigest()
         if digest not in dp.KNOWN_TEMPLATE_HASHES:
             missing[digest] = commit[:8]
-    here = hashlib.sha256(dp.persona_template_path().read_bytes()).hexdigest()
+    # The working tree is hashed through read_text, not read_bytes, because
+    # what this list is compared against in production is the bytes of a file
+    # `_write_atomically` wrote — and that writes LF. The `git show` blobs
+    # above are LF for the same reason: git stores them normalised. Hashing
+    # the working tree's RAW bytes instead asks a different question, one
+    # whose answer depends on the checkout: `core.autocrlf` is true by
+    # default in Git for Windows, so this file arrives CRLF there and its
+    # raw hash is a value that can never occur in production. Measured — it
+    # was the one entry this test reported missing on Windows.
+    here_text = dp.persona_template_path().read_text(encoding="utf-8")
+    here = hashlib.sha256(here_text.encode("utf-8")).hexdigest()
     if here not in dp.KNOWN_TEMPLATE_HASHES:
         missing[here] = "the working tree"
     assert not missing, (

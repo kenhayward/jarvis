@@ -176,7 +176,21 @@ def _write_atomically(path: Path, text: str) -> bool:
             # of here into `_sync_template` and took down every caller that
             # seeds a brain home. Adding the encoding took the Windows suite
             # from 443 errors to 11, and 1788 passing to 2215.
-            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            #
+            # newline= is not optional either, and for a subtler reason. The
+            # caller hashes the text it hands in and compares that against
+            # the BYTES read back off disk later, which is how an edit is
+            # told from an untouched file. Text mode translates "\n" to
+            # "\r\n" on Windows, so the bytes written were never the bytes
+            # hashed and the comparison could not match — measured, on the
+            # shipped persona. `_sync_template` then read its own untouched
+            # file as the user's work: it refused every future update and
+            # told the user their CLAUDE.md "has been edited" when they had
+            # never opened it. Writing LF verbatim makes the file on disk
+            # exactly the text that was hashed, on either platform, which is
+            # also what keeps the KNOWN_*_HASHES lists meaningful — they
+            # were computed over LF.
+            with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as fh:
                 fh.write(text)
             os.replace(tmp, path)
         except BaseException:

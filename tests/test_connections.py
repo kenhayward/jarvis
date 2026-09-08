@@ -139,7 +139,12 @@ def test_every_connections_template_this_project_has_shipped_is_listed(
         digest = hashlib.sha256(blob).hexdigest()
         if digest not in dp.KNOWN_CONNECTIONS_HASHES:
             missing[digest] = commit[:8]
-    here = hashlib.sha256(dp.connections_template_path().read_bytes()).hexdigest()
+    # read_text, not read_bytes — see the matching note in
+    # tests/test_data_paths.py: this list is compared in production
+    # against the bytes of a file `_write_atomically` wrote, and that
+    # writes LF, while a Windows checkout leaves this file CRLF.
+    here_text = dp.connections_template_path().read_text(encoding="utf-8")
+    here = hashlib.sha256(here_text.encode("utf-8")).hexdigest()
     if here not in dp.KNOWN_CONNECTIONS_HASHES:
         missing[here] = "the working tree"
     assert not missing, (
@@ -311,9 +316,17 @@ def test_the_allowlist_grants_exactly_the_servers_the_user_declared(tmp_path):
     b = brain.Brain(_config(tmp_path, connections=["notion", "linear"]))
     granted = b.command()[b.command().index("--tools") + 1].split(",")
 
-    assert granted[:len(brain.ALLOWED_TOOLS)] == brain.ALLOWED_TOOLS, \
+    # The baseline is what this MACHINE grants, not the unconditional
+    # ALLOWED_TOOLS. The two are the same on macOS and deliberately are not
+    # elsewhere: `granted_tools` subtracts whatever the platform cannot do,
+    # so on Windows the four withdrawn tools are absent and comparing against
+    # ALLOWED_TOOLS asserted "this platform withdraws nothing" by accident.
+    # The property actually under test — connections ADD and never subtract —
+    # is the same on every platform once the right baseline is used.
+    baseline = brain.granted_tools([])
+    assert granted[:len(baseline)] == baseline, \
         "the baseline is untouched — this adds, it never subtracts"
-    assert granted[len(brain.ALLOWED_TOOLS):] == ["mcp__notion", "mcp__linear"]
+    assert granted[len(baseline):] == ["mcp__notion", "mcp__linear"]
     assert "mcp__github" not in granted, "not declared, not granted"
 
 
@@ -324,7 +337,11 @@ def test_no_declared_servers_leaves_the_flag_byte_identical(tmp_path):
     import brain
     b = brain.Brain(_config(tmp_path))
     cmd = b.command()
-    assert cmd[cmd.index("--tools") + 1] == ",".join(brain.ALLOWED_TOOLS)
+    # granted_tools([]), not ALLOWED_TOOLS — see the test above: "the exact
+    # command it was before any of this existed" means before CONNECTIONS
+    # existed, and the platform withdrawal is a separate, later subtraction
+    # that this test is not about.
+    assert cmd[cmd.index("--tools") + 1] == ",".join(brain.granted_tools([]))
 
 
 def test_the_static_allowlist_still_names_only_jarvis_and_the_two_web_tools():
