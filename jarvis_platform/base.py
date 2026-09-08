@@ -19,7 +19,11 @@ or the API. `screen_capture` is a thing JARVIS can or cannot do;
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import logging
+from dataclasses import dataclass, field
+from typing import Protocol
+
+log = logging.getLogger("jarvis.platform")
 
 
 # --- the capabilities ------------------------------------------------------
@@ -77,17 +81,55 @@ TOOL_CAPABILITIES: dict[str, str] = {
 }
 
 
+# --- the sub-interfaces ----------------------------------------------------
+#
+# One per module as it physically moves behind the layer. A protocol written
+# before its implementation would be an interface designed against a guess,
+# so this list grows with `jarvis_platform/macos/` rather than ahead of it.
+
+
+class Notifications(Protocol):
+    """Getting the user's attention when nothing is listening on the voice
+    channel. Implementations must never raise — see the macOS one."""
+
+    def available(self) -> bool: ...
+
+    async def notify(self, title: str, message: str, *,
+                     subtitle: str = "") -> bool: ...
+
+
+class _NoNotifications:
+    """The answer on a platform whose notifications have not been built.
+
+    Exactly what the macOS implementation already did when it found itself
+    somewhere else: say so once in the log, report False, and never raise.
+    The announcement path treats False as "nobody was told", which is true.
+    """
+
+    def available(self) -> bool:
+        return False
+
+    async def notify(self, title: str, message: str, *,
+                     subtitle: str = "") -> bool:
+        log.warning("notifications are not available on this platform")
+        return False
+
+
+NO_NOTIFICATIONS = _NoNotifications()
+
+
 @dataclass(frozen=True)
 class Host:
-    """One platform, and what it can do.
+    """One platform, what it can do, and how it does it.
 
-    Intentionally only two fields for now. The sub-interfaces (notifications,
-    screen, launcher, sessions) arrive as each module physically moves behind
-    them; declaring protocols that nothing implements yet would be interface
-    written against a guess rather than against code.
+    The sub-interface fields default to null objects so that an unknown
+    platform is constructible and JARVIS still starts on it. That is the
+    same choice `capabilities` makes: claim nothing, refuse cleanly, and
+    let the portable two thirds of him work.
     """
     name: str
     capabilities: frozenset[str]
+    notifications: Notifications = field(default=NO_NOTIFICATIONS)
 
     def can(self, capability: str) -> bool:
         return capability in self.capabilities

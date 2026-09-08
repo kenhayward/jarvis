@@ -202,3 +202,21 @@ async def test_preflight_runs_every_check_on_a_complete_host(as_host, monkeypatc
 
     names = {c.name for c in await preflight.run_checks(timeout=0.5)}
     assert {"accessibility", "screen_recording"} <= names
+
+
+# --- the sub-interfaces ----------------------------------------------------
+
+def test_the_macos_host_carries_the_real_notifications_module():
+    from jarvis_platform.macos import MACOS, notifications
+    assert MACOS.notifications is notifications
+
+
+@pytest.mark.asyncio
+async def test_a_host_without_notifications_declines_rather_than_raising():
+    """The announcement path calls this when nothing is listening on the
+    voice channel and must never be broken by it — so an unbuilt platform
+    answers "nobody was told", which is true, instead of throwing into the
+    watcher."""
+    host = jp.Host(name="plan9", capabilities=frozenset())
+    assert host.notifications.available() is False
+    assert await host.notifications.notify("t", "m", subtitle="s") is False

@@ -92,7 +92,6 @@ import data_paths
 import dialog
 import jarvis_memory
 import jarvis_platform
-import notifier
 import tts
 from brain import Brain, BrainConfig, MAX_BOOT_PROJECTS
 from speech import Priority, SpeechScheduler
@@ -1330,16 +1329,18 @@ async def _notify_needs_you(name: str, line: str) -> None:
     is an interruption and has to earn it.
 
     `name` and `line` carry text from another Claude Code session's transcript,
-    so they are handed to notifier.notify() as arguments and never formatted
-    into a command; see notifier.py's module docstring for why that matters.
+    so they are handed to `notify()` as arguments and never formatted into a
+    command; see jarvis_platform/macos/notifications.py's module docstring
+    for why that matters.
 
     Never raises: a notification failure must not break the announcement path
     or reach the watcher.
     """
-    if voice_clients or not notifier.available():
+    notifications = jarvis_platform.current().notifications
+    if voice_clients or not notifications.available():
         return
     try:
-        await notifier.notify("JARVIS", line, subtitle=name)
+        await notifications.notify("JARVIS", line, subtitle=name)
     except Exception as e:
         log.warning(f"needs-you notification failed: {e}")
 

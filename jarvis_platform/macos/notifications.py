@@ -1,5 +1,5 @@
 """
-JARVIS Notifier -- macOS notification fallback.
+macOS notifications -- the fallback when no browser tab is listening.
 
 When JARVIS needs the user's attention but no browser tab is connected to
 speak through, this posts a native macOS notification instead. See

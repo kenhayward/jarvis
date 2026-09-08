@@ -131,8 +131,11 @@ the commit why the alternative was worse.
 - `session_steer.py` — Sends a message into a running session's inbox socket
 - `dialog.py` — Answers a permission prompt in a Terminal window by sending
   it a keystroke (needs Accessibility)
-- `notifier.py` — macOS notification fallback when no browser tab is
-  connected to speak through
+- `jarvis_platform/macos/notifications.py` — macOS notification fallback
+  when no browser tab is connected to speak through. Reached as
+  `jarvis_platform.current().notifications`; a platform without one
+  declines rather than raising, because the announcement path must never
+  break. Was `notifier.py`
 - `jarvis_memory.py` — Long-term memory: a folder of plain Markdown files the
   user can read and edit directly, not a database
 - `usage_store.py` — Tracks the subscription's five-hour / seven-day
@@ -146,7 +149,9 @@ the commit why the alternative was worse.
   `claude` path (POSIX splitting destroys a Windows one)
 - `jarvis_platform/` — What this machine can do, stated once. `base.py` holds
   the capability constants and `TOOL_CAPABILITIES` (tool name -> capability);
-  `macos.py` declares all of them, so on a Mac this layer is invisible.
+  `macos/` declares all of them, so on a Mac this layer is invisible, and
+  holds the implementations as MODULES (not class instances) so the test
+  suite can keep patching them across an `importlib.reload(server)`.
   Four consumers read it and they must not disagree: the `/internal/tool`
   dispatch gate, `brain.granted_tools`, the `JARVIS_DISABLED_TOOLS` env block
   in `_write_mcp_config`, and `preflight`'s `_CHECK_CAPABILITIES`. **Not**
