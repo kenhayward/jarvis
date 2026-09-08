@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -39,8 +40,88 @@ def config_roots() -> list[Path]:
     return roots
 
 
+# --- is that process still there? ------------------------------------------
+#
+# This runs on the poll loop, against the pid of every live Claude Code
+# session on the machine, so it must be cheap AND it must not touch them.
+#
+# `os.kill(pid, 0)` is the POSIX idiom for exactly that. On Windows it is not
+# a probe at all: CPython maps every signal except CTRL_C_EVENT and
+# CTRL_BREAK_EVENT to `TerminateProcess(handle, sig)`, so `os.kill(pid, 0)`
+# KILLS the process with exit code 0. Starting JARVIS on Windows would have
+# killed the user's sessions, once per poll, and the watcher would then have
+# correctly reported them as gone. That is the bug this split exists to
+# prevent — see the comment on `_pid_alive_windows` for what replaces it.
+
+_SYNCHRONIZE = 0x00100000
+_PROCESS_QUERY_LIMITED_INFORMATION = 0x00001000
+_ERROR_ACCESS_DENIED = 5
+_WAIT_TIMEOUT = 0x00000102
+
+
+def _pid_alive_posix(pid: int) -> bool:
+    """Signal 0 checks without touching it.
+
+    A `PermissionError` means the process exists but belongs to somebody
+    else, and this deliberately still answers False — carried over verbatim
+    from the original so that no macOS behaviour changes here. Every session
+    JARVIS watches is the user's own, so the distinction has never arisen.
+    """
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False
+    return True
+
+
+def _make_windows_probe():
+    """Build the Windows probe once, with its prototypes declared.
+
+    `OpenProcess` returns a HANDLE, which is 64-bit in a 64-bit process while
+    ctypes' default return type is a 32-bit int — so the prototypes below are
+    not decoration; without them the handle is truncated and `CloseHandle`
+    leaks or fails.
+
+    PROCESS_QUERY_LIMITED_INFORMATION is the least authority that answers the
+    question, and `WaitForSingleObject(h, 0)` is asked rather than
+    `GetExitCodeProcess` because a process that genuinely exits with code 259
+    is indistinguishable from a running one to the latter (STILL_ACTIVE is
+    259). The wait has no such ambiguity: WAIT_TIMEOUT means it has not
+    finished.
+    """
+    import ctypes
+    from ctypes import wintypes
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.OpenProcess.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
+    kernel32.OpenProcess.restype = wintypes.HANDLE
+    kernel32.WaitForSingleObject.argtypes = (wintypes.HANDLE, wintypes.DWORD)
+    kernel32.WaitForSingleObject.restype = wintypes.DWORD
+    kernel32.CloseHandle.argtypes = (wintypes.HANDLE,)
+    kernel32.CloseHandle.restype = wintypes.BOOL
+
+    def _pid_alive_windows(pid: int) -> bool:
+        handle = kernel32.OpenProcess(
+            _SYNCHRONIZE | _PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+        if not handle:
+            # Access denied means it is there and not ours to inspect, which
+            # is the same "still running" the POSIX path reports for a live
+            # pid. Anything else — chiefly ERROR_INVALID_PARAMETER — is a pid
+            # that no longer names a process.
+            return ctypes.get_last_error() == _ERROR_ACCESS_DENIED
+        try:
+            return kernel32.WaitForSingleObject(handle, 0) == _WAIT_TIMEOUT
+        finally:
+            kernel32.CloseHandle(handle)
+
+    return _pid_alive_windows
+
+
+_probe = _make_windows_probe() if sys.platform == "win32" else _pid_alive_posix
+
+
 def pid_alive(pid) -> bool:
-    """True if the process exists. Signal 0 checks without touching it.
+    """True if the process exists. Never touches it, on either platform.
 
     `pid` must be a positive integer: 0 means "this process's group" and a
     negative pid means "that group" to `os.kill`, neither of which is a real
@@ -48,12 +129,14 @@ def pid_alive(pid) -> bool:
     """
     try:
         pid = int(pid)
-        if pid <= 0:
-            return False
-        os.kill(pid, 0)
-    except (OSError, TypeError, ValueError):
+    except (TypeError, ValueError):
         return False
-    return True
+    if pid <= 0:
+        return False
+    try:
+        return _probe(pid)
+    except OSError:
+        return False
 
 
 def encode_cwd(cwd: str) -> str:

@@ -21,6 +21,7 @@ updated is the one nobody notices.
 from __future__ import annotations
 
 import os
+import shlex
 
 # Every ANTHROPIC_* variable, not just the key: the base URL and the model
 # override redirect a child just as effectively as credentials do.
@@ -56,3 +57,63 @@ def child_env(base: dict[str, str] | None = None) -> dict[str, str]:
     return {k: v for k, v in source.items()
             if not k.startswith(SCRUBBED_ENV_PREFIXES)
             and k not in SCRUBBED_ENV_KEYS}
+
+
+def split_command(spec: str) -> list[str]:
+    """Split a configured program spec — `JARVIS_CLAUDE_PATH`, or whatever
+    `shutil.which` found — into an argv list.
+
+    The spec may be a bare program name, a path, or a path followed by
+    arguments; the third form is why this is a split at all rather than a
+    one-element list. `shlex.split` is right for all three on POSIX and
+    destroys the second and third on Windows, because it treats backslash as
+    an escape character. Measured:
+
+        >>> shlex.split(r"C:\\nodejs\\claude.cmd")
+        ['C:nodejsclaude.cmd']
+        >>> shlex.split(r"C:\\Program Files\\nodejs\\claude.cmd")
+        ['C:Program', 'Filesnodejsclaude.cmd']
+
+    Every separator is eaten, and a path with a space in it is torn in two
+    besides. The run then fails to spawn with an error naming a program
+    nobody typed — and `JARVIS_CLAUDE_PATH` is precisely the setting a
+    Windows user reaches for first, so the failure lands on the person
+    already trying to work around something.
+
+    The rule, in order:
+
+    1. If the whole spec names a file that exists, it is one token. Exact on
+       both platforms, no quoting rules involved, and it covers every spec
+       that is just a path — including one with spaces in it and no quotes,
+       which no splitter would get right.
+    2. Otherwise, POSIX splits POSIX-style.
+    3. Otherwise, Windows splits without backslash escaping and strips the
+       quote pair the caller wrote around an argument, which is as close to
+       CommandLineToArgvW as the standard library offers.
+
+    NOTE for the Windows platform work: splitting is only half of it.
+    `create_subprocess_exec` cannot run a `.cmd` or `.bat` directly — those
+    need the command processor — so spawning a `claude.cmd` still has to be
+    handled at the call sites. That is deliberately not done here; this
+    function's job is to hand back what the user actually configured.
+    """
+    spec = (spec or "").strip()
+    if not spec:
+        return []
+
+    try:
+        if os.path.isfile(spec):
+            return [spec]
+    except (OSError, ValueError):
+        pass                          # an absurd path is not a file; go split
+
+    if os.name != "nt":
+        return shlex.split(spec)
+
+    tokens = []
+    for token in shlex.split(spec, posix=False):
+        if len(token) >= 2 and token[0] == token[-1] and token[0] in "\"'":
+            token = token[1:-1]
+        if token:
+            tokens.append(token)
+    return tokens
