@@ -786,6 +786,33 @@ def test_every_echo_site_is_walled_when_driven(server, payload):
             f"{name} echoed its argument: {out!r}"
 
 
+def _can_name_a_file(name: str) -> bool:
+    """Will this filesystem accept a file with that name at all?
+
+    The attacks below are carried by the NAME: a newline in it forges a line
+    of JARVIS's own speech in a header, a quote closes the untrusted wrapper.
+    Windows refuses both outright — measured, the Win32 layer rejects control
+    characters and `"` in a path component — so the file cannot be created
+    and the test has nothing to attack with.
+
+    Read the skip as a NARROWER threat surface, not an untested one: the wall
+    in `server` is unchanged and is exercised by every other input here. What
+    is missing is only the ability to build these two particular shapes.
+    """
+    import pathlib
+    import tempfile
+    probe = pathlib.Path(tempfile.mkdtemp()) / name
+    try:
+        probe.write_text("x", encoding="utf-8")
+    except OSError:
+        return False
+    return True
+
+
+@pytest.mark.skipif(
+    not _can_name_a_file('a\nb') or not _can_name_a_file('a"b'),
+    reason="this filesystem refuses newlines and quotes in a filename, "
+           "so neither hostile name can be built here")
 def test_a_file_the_repository_named_is_not_spoken_raw(server, monkeypatch, tmp_path):
     """The ninth audit: a filename on APFS may hold anything but `/` and
     NUL, and `open_in_editor`'s FOUND branch said it raw — twenty lines
@@ -797,9 +824,13 @@ def test_a_file_the_repository_named_is_not_spoken_raw(server, monkeypatch, tmp_
 
     async def opened(*a, **k):
         return {"success": True, "editor": "Cursor"}
-    from jarvis_platform.macos import launcher
-    monkeypatch.setattr(launcher, "editor", opened)
-    monkeypatch.setattr(launcher, "browser", opened)
+    # Every implementation — see tests/conftest.py. Naming only macOS
+    # here would leave the fake inert elsewhere and launch a real editor.
+    from jarvis_platform.macos import launcher as macos_launcher
+    from jarvis_platform.windows import launcher as windows_launcher
+    for _mod in (macos_launcher, windows_launcher):
+        monkeypatch.setattr(_mod, "editor", opened)
+        monkeypatch.setattr(_mod, "browser", opened)
 
     out = _run(server.tool_open_in_editor({"project": "chitauri", "path": evil}))
     assert out.startswith("Opened that file in Cursor"), out

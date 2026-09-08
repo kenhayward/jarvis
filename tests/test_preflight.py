@@ -335,6 +335,19 @@ async def test_accessibility_skipped_off_darwin(monkeypatch):
 # fails silently -- `screencapture` exits 0 and hands back a black frame -- so
 # it is worth saying at startup rather than at the moment he asks.
 
+# `_check_screen_recording_sync` is capability-gated in production
+# (`preflight._CHECK_CAPABILITIES`), and on a platform that does not declare
+# CAP_SCREEN_CAPTURE it answers `warn` — "this machine has no such
+# permission to check" — whatever the macOS module is patched to say. The
+# three below assert the macOS ANSWERS, so they belong to a host that has
+# the capability. Gated on the same condition production uses rather than on
+# `sys.platform`, so they follow the capability if it ever moves.
+_needs_screen_capture = pytest.mark.skipif(
+    not jarvis_platform.can(jarvis_platform.CAP_SCREEN_CAPTURE),
+    reason="no CAP_SCREEN_CAPTURE here; the check is withdrawn, not failing")
+
+
+@_needs_screen_capture
 def test_screen_recording_granted(monkeypatch):
     monkeypatch.setattr(jarvis_platform.macos.screen, "permission_granted", lambda: True)
     check = preflight._check_screen_recording_sync()
@@ -342,6 +355,7 @@ def test_screen_recording_granted(monkeypatch):
     assert check.remedy is None
 
 
+@_needs_screen_capture
 def test_screen_recording_not_granted_is_fail_with_the_launching_app_remedy(monkeypatch):
     monkeypatch.setattr(jarvis_platform.macos.screen, "permission_granted", lambda: False)
     check = preflight._check_screen_recording_sync()
@@ -369,6 +383,7 @@ def test_screen_recording_check_never_raises(monkeypatch):
     assert check.status == STATUS_WARN
 
 
+@_needs_screen_capture
 def test_the_startup_check_never_takes_a_picture(monkeypatch):
     """Preflight asks the OS a question. It does NOT capture the screen to
     find out -- that would be a screenshot the user never asked for, at every
@@ -611,10 +626,18 @@ async def test_run_checks_runs_all_registered_checks(monkeypatch):
 
     results = await preflight.run_checks(timeout=1.0)
     names = {c.name for c in results}
-    assert names == {
-        "claude_cli", "claude_login", "accessibility", "screen_recording",
-        "voice", "anthropic_key_leftover", "cross_session_inbound",
-    }
+    # Two of these are capability-gated, and where the platform withdraws
+    # them they are not merely skipped, they are ABSENT from the run --
+    # `preflight._applies_here` never calls them. So the expected set is
+    # built the same way production builds the run, rather than pinning a
+    # complete host and calling every other one a failure.
+    expected = {"claude_cli", "claude_login", "voice",
+                "anthropic_key_leftover", "cross_session_inbound"}
+    if jarvis_platform.can(jarvis_platform.CAP_DIALOG_KEY):
+        expected.add("accessibility")
+    if jarvis_platform.can(jarvis_platform.CAP_SCREEN_CAPTURE):
+        expected.add("screen_recording")
+    assert names == expected
 
 
 # --- spoken_summary -------------------------------------------------------------

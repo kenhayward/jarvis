@@ -226,11 +226,30 @@ Each of these takes a minute and either confirms a sample or replaces one.
    ordinary file gave the three inherited ACEs, but each carrying `(I)`, and
    `_ICACLS_INHERITED` has been corrected to match. `_parse_aces` read both
    real outputs correctly with no change.
-3. **Adoption refuses a foreign file.** Put a file with inherited ACLs at the
-   token path and confirm the server refuses to boot rather than adopting
-   it. This is the property that stops JARVIS trusting a token somebody else
-   chose and knows. **Still open** — the two above were read-only, this one
-   writes to the token path and was left for a deliberate run.
+3. ~~**Adoption refuses a foreign file.**~~ — **DONE 2026-09-08, and it now
+   has a test.** A file created by ordinary means at the token path carries
+   inherited ACLs, and `ensure_tool_token()` refuses it:
+
+       OSError: ...\tool-token is not granted solely to this user;
+       remove it if it is yours and JARVIS will make a new one
+
+   It is not re-permissioned and not deleted, and since that call runs
+   before anything else at startup, JARVIS does not boot rather than booting
+   on a token a stranger chose. Pinned by
+   `test_a_pre_existing_token_windows_cannot_prove_is_ours_is_refused`.
+
+   Note the asymmetry, because it is deliberate rather than an oversight:
+   POSIX can see the file is owned by this user and simply TIGHTENS the mode
+   (`test_ensure_tool_token_fixes_permissions_of_a_pre_existing_file`).
+   Windows has no cheap `getuid`, so the DACL is the ownership test, and a
+   DACL it did not write proves nothing — hence refuse rather than adopt.
+   Windows is the stricter of the two here.
+
+   One trap worth keeping: rewriting an existing file on Windows does NOT
+   reset its DACL, so planting content over JARVIS's own token leaves it
+   still granted solely to us and correctly adopted. The file has to be
+   newly CREATED to inherit the directory's ACLs and look like somebody
+   else's.
 4. ~~**A toast actually appears.**~~ — **DONE 2026-09-08. The AUMID is
    right.** Real toasts were seen on screen during a suite run, which is
    the only kind of evidence that settles this: an unregistered AUMID makes
