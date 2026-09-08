@@ -359,6 +359,76 @@ class _NoScreen:
 NO_SCREEN = _NoScreen()
 
 
+# --- files only their owner may read ---------------------------------------
+#
+# One file needs this and it is the loopback tool token, which admits its
+# bearer to every acting tool and to every state-changing HTTP route. The
+# POSIX statement of the requirement is "mode 0600, and do not follow
+# symlinks"; neither half survives translation, so the requirement is stated
+# here as behaviour and each platform keeps it its own way.
+
+
+class PrivateFileUnsupported(RuntimeError):
+    """This platform cannot promise a file only its owner can read.
+
+    Deliberately NOT an OSError. `web_auth` wraps its `ensure_tool_token`
+    call in `except Exception` and denies; startup lets this propagate and
+    refuses to boot. Both fail closed, which is the point — an OSError
+    would be at risk of being swallowed by code handling ordinary file
+    trouble.
+    """
+
+
+class Secrets(Protocol):
+    """Create and adopt a file only this user can read.
+
+    Both return an OPEN file descriptor which the caller must close, or —
+    for `create` — None when the file already exists. Returning a
+    descriptor rather than a path is the whole point: it is what lets an
+    implementation prove that the thing it checked is the thing the caller
+    then reads.
+    """
+
+    def create_private(self, path) -> int | None:
+        """A new private file, or None if one is already there.
+
+        Must be atomic against a file that appears between the check and
+        the create, and must never exist even briefly at permissions
+        somebody else could read.
+        """
+        ...
+
+    def adopt_private(self, path) -> int:
+        """An existing file, proven to be ours, opened for reading.
+
+        Must refuse — by raising — anything that is not a regular file this
+        user owns, rather than replacing it: it is somebody else's file and
+        deleting it is not ours to do. Must not be fooled by a link planted
+        at the path, in whatever form this platform spells one.
+        """
+        ...
+
+
+class _NoSecrets:
+    """A platform whose private-file story has not been written.
+
+    Refuses loudly rather than degrading. The failure to avoid is a silent
+    fallback that leaves the token at whatever permissions it was born with
+    while the docstring still promises otherwise.
+    """
+
+    def create_private(self, path) -> int | None:
+        raise PrivateFileUnsupported(
+            f"cannot create {path} with owner-only access on this platform")
+
+    def adopt_private(self, path) -> int:
+        raise PrivateFileUnsupported(
+            f"cannot prove {path} is private to this user on this platform")
+
+
+NO_SECRETS = _NoSecrets()
+
+
 @dataclass(frozen=True)
 class Host:
     """One platform, what it can do, and how it does it.
@@ -374,6 +444,7 @@ class Host:
     launcher: Launcher = field(default=NO_LAUNCHER)
     dialogs: Dialogs = field(default=NO_DIALOGS)
     screen: Screen = field(default=NO_SCREEN)
+    secrets: Secrets = field(default=NO_SECRETS)
 
     def can(self, capability: str) -> bool:
         return capability in self.capabilities

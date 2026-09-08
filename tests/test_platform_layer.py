@@ -354,3 +354,24 @@ def test_no_permission_needed_means_granted_not_unknown():
     doc = Screen.permission_granted.__doc__
     assert "returns True, not None" in doc
     assert "could not be run" in doc
+
+
+def test_fake_host_keeps_the_real_providers_it_was_not_asked_about():
+    """Learned the hard way. A test installing a recording launcher used to
+    lose `secrets` with it, and every server test calls `ensure_tool_token`
+    at boot — so the failure surfaced nowhere near the provider that had
+    actually been swapped."""
+    from jarvis_platform import base
+    from jarvis_platform.fake import fake_host
+    from jarvis_platform.macos import MACOS
+
+    recorder = object()
+    host = fake_host(launcher=recorder)
+    assert host.launcher is recorder
+    assert host.secrets is MACOS.secrets
+    assert host.screen is MACOS.screen
+    assert host.notifications is MACOS.notifications
+    assert host.dialogs is MACOS.dialogs
+
+    # ...and a test that genuinely wants one absent says so.
+    assert fake_host(secrets=base.NO_SECRETS).secrets is base.NO_SECRETS

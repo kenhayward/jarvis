@@ -155,6 +155,12 @@ the commit why the alternative was worse.
   `macos/` declares all of them, so on a Mac this layer is invisible, and
   holds the implementations as MODULES (not class instances) so the test
   suite can keep patching them across an `importlib.reload(server)`.
+  `windows/` declares only what it has actually built — add a capability in
+  the same commit as its implementation, never before, or the whole design
+  becomes a wish list. Its modules are written from documentation rather
+  than measured on a machine, which is the opposite of this repo's usual
+  rule; each says so, and isolates the guess so a real box corrects it in
+  one place.
   Four consumers read it and they must not disagree: the `/internal/tool`
   dispatch gate, `brain.granted_tools`, the `JARVIS_DISABLED_TOOLS` env block
   in `_write_mcp_config`, and `preflight`'s `_CHECK_CAPABILITIES`. **Not**
@@ -198,6 +204,11 @@ the commit why the alternative was worse.
 - `data_paths.py` — Single source of truth for where data is written
 
 ## Other directories
+- `docs/plans/` — the cross-platform port: the phased plan, and the live
+  handoff used while the work spans a Mac and a Windows box. Read
+  `windows-handoff.md` before touching `jarvis_platform/windows/` — that
+  package is written from documentation rather than measured, and the
+  handoff is the checklist for correcting it
 - `jarvis_home/` — The brain's own home, templated into the data dir by
   `data_paths.py`: `CLAUDE.md` is JARVIS's system prompt (how he speaks; it
   `@`-imports the memory index), and `connections.json` is the *only* file
