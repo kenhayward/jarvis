@@ -454,36 +454,12 @@ async def test_an_absolute_path_outside_the_project_is_refused(ready, tmp_path):
     assert "not yours" not in out
 
 
-def _needs_symlinks(tmp_path):
-    """Skip if this machine will not let us BUILD the attack.
-
-    Creating a symlink on Windows needs SeCreateSymbolicLinkPrivilege —
-    Developer Mode or an elevated shell — and a stock account has neither:
-    measured, `OSError [WinError 1314] A required privilege is not held by
-    the client`. Probed rather than assumed from `sys.platform`, so that a
-    box WITH Developer Mode on runs these rather than skipping them.
-
-    Read the skip as what it is: on such a machine the symlink half of
-    containment is UNPROVEN, not proven safe. The production check resolves
-    both sides and is not platform-specific, so there is no reason to think
-    it is weaker here — but no reason built from evidence to think it holds,
-    either. Turn Developer Mode on to get that evidence.
-    """
-    probe = tmp_path / "_symlink_probe"
-    try:
-        probe.symlink_to(tmp_path)
-    except OSError as e:
-        pytest.skip(f"cannot create a symlink to test with ({e.strerror}); "
-                    "symlink containment is unproven on this machine")
-    probe.unlink()
-
-
 @pytest.mark.asyncio
-async def test_a_symlink_pointing_out_of_the_project_is_refused(ready, tmp_path):
+async def test_a_symlink_pointing_out_of_the_project_is_refused(
+        ready, tmp_path, needs_symlinks):
     """Containment is proved by resolving BOTH sides — a string prefix test
     has never been enough."""
     server, _fake, project = ready
-    _needs_symlinks(tmp_path)
     secret = tmp_path / "outside.txt"
     secret.write_text("not yours")
     (project / "innocent.ts").symlink_to(secret)
@@ -496,10 +472,9 @@ async def test_a_symlink_pointing_out_of_the_project_is_refused(ready, tmp_path)
 
 
 @pytest.mark.asyncio
-async def test_a_symlinked_directory_out_of_the_project_is_refused(ready,
-                                                                   tmp_path):
+async def test_a_symlinked_directory_out_of_the_project_is_refused(
+        ready, tmp_path, needs_symlinks):
     server, _fake, project = ready
-    _needs_symlinks(tmp_path)
     elsewhere = tmp_path / "elsewhere"
     elsewhere.mkdir()
     (elsewhere / "loot.txt").write_text("not yours")

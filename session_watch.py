@@ -156,6 +156,58 @@ def _ms(value) -> float | None:
         return None
 
 
+# The Windows pipe namespace, in the two spellings it needs. They are not
+# interchangeable: `os.listdir` accepts ONLY the forward-slash form —
+# measured, `\\.\pipe` and `\\.\pipe\` both raise ENOENT — while the value
+# the roster writes is always the backslash one.
+_PIPE_DIR = "//./pipe"
+_PIPE_PREFIX = "\\\\.\\pipe\\"                    # literally:  \\.\pipe\
+
+
+def _inbox_exists(socket_path: str | None) -> bool:
+    """Whether the inbox a roster entry names is actually there.
+
+    On POSIX it is an AF_UNIX socket, which is a file, and `Path.exists()`
+    is the entire answer. That branch is left exactly as it was.
+
+    On Windows it is a NAMED PIPE, where `Path.exists()` is not merely
+    wrong but dangerous: it OPENS an instance in order to stat it, so
+    against a pipe whose instances are all in use it does not return False,
+    it RAISES. Measured, five calls in a row against a live `cc-msg` pipe:
+    the first answered True because an instance happened to be free, and
+    the next four raised `OSError(22) "All pipe instances are busy"`. This
+    property is read by the sort key in `_rank`, so that raise did not
+    merely disable steering — it took down roster LISTING, and it did so
+    intermittently, according to whether the pipe was busy at that instant.
+
+    `os.path.exists` is not the fix. It swallows the OSError and answers
+    False, which is worse than raising: every session on the machine reads
+    as un-steerable and nothing says why.
+
+    Enumerating the namespace consumes no instance, so it is the only
+    reading that stays true whatever the pipe is doing. Names there are
+    case-insensitive, hence the folded compare. It costs ~0.7 ms against
+    the 188 pipes live on the measuring machine, which is why there is no
+    cache: this is a roster scan, not the transcript walk.
+
+    Branched on the VALUE and not on `sys.platform`, deliberately. What
+    needs the special reading is a pipe, not an operating system: a path
+    that is not in the pipe namespace is an ordinary filesystem name and
+    `Path.exists()` answers it correctly on either platform. Keying on the
+    platform instead would make every non-pipe path on Windows read as
+    absent — including the plain files the tests stand a socket up as.
+    """
+    if not socket_path:
+        return False
+    if socket_path.startswith(_PIPE_PREFIX):
+        name = socket_path[len(_PIPE_PREFIX):].lower()
+        try:
+            return any(entry.lower() == name for entry in os.listdir(_PIPE_DIR))
+        except OSError:
+            return False
+    return Path(socket_path).exists()
+
+
 @dataclass(frozen=True)
 class RosterEntry:
     """One `sessions/<pid>.json` — one live `claude` process."""
@@ -180,7 +232,7 @@ class RosterEntry:
         Measured: 4 of 17 live entries had none. `ListAgents` cannot see those
         at all, which is why this watcher exists.
         """
-        return bool(self.socket_path) and Path(self.socket_path).exists()
+        return _inbox_exists(self.socket_path)
 
 
 def _parse_entry(path: Path, root: Path) -> RosterEntry | None:

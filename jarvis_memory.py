@@ -13,7 +13,7 @@ keeping a stale line.
 from __future__ import annotations
 
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import data_paths
@@ -323,7 +323,12 @@ def write_project_note(project: str, text: str) -> Path:
     stamp = datetime.now().strftime("%Y-%m-%d %H:%M")
     if not path.exists():
         path.write_text(f"# {project}\n\n", encoding="utf-8")
-    with path.open("a") as fh:
+    # The em-dash below is exactly why this needs the encoding named. Without
+    # it the APPEND took the locale's codec while the create above took UTF-8,
+    # so on Windows one file ended up half cp1252 — and the em-dash landed as
+    # the single byte 0x97, which is not valid UTF-8 at all. Every later read
+    # of that note then died with UnicodeDecodeError rather than returning it.
+    with path.open("a", encoding="utf-8") as fh:
         fh.write(f"_{stamp}_ — {text}\n")
     return path
 
@@ -338,6 +343,36 @@ def read_project_note(project: str) -> str | None:
 
 _JOURNAL_STAMP_FMT = "%Y-%m-%d-%H%M%S-%f"   # fixed-width: lexicographic == chronological
 _JOURNAL_NAME_RE = re.compile(r"(\d{4}-\d{2}-\d{2}-\d{6}-\d{6})-(.+)\.md")
+
+
+def _next_journal_stamp() -> str:
+    """A stamp strictly greater than every entry already on disk.
+
+    `journal_entries` orders on this string ALONE, so two entries sharing one
+    are not merely tied, they are unordered — and `latest_journal`, which
+    takes the last of them, then returns whichever the filename happened to
+    sort after. That is the entry carried into the next generation, so the
+    cost of getting it wrong is the new brain being handed the wrong
+    handover, silently.
+
+    The microsecond field reads like enough resolution to make that
+    impossible. It is not. `datetime.now()` on Windows advances only every
+    1-8 ms — measured, and ten consecutive calls returned the IDENTICAL
+    microsecond value — so two handovers written back to back collide every
+    time. The same race exists anywhere the clock is coarse next to the
+    writes; Windows only makes it certain rather than rare, which is why
+    this is fixed here rather than guarded for one platform.
+
+    Clamped forward rather than slept through: the stamp exists to ORDER
+    entries, and a microsecond of drift from the wall clock costs nothing
+    that is read, while a wrong order costs the handover.
+    """
+    stamp = datetime.now().strftime(_JOURNAL_STAMP_FMT)
+    entries = journal_entries()
+    if entries and entries[-1][0] >= stamp:
+        newest = datetime.strptime(entries[-1][0], _JOURNAL_STAMP_FMT)
+        stamp = (newest + timedelta(microseconds=1)).strftime(_JOURNAL_STAMP_FMT)
+    return stamp
 
 # Reasons that mark an entry as a PLACEHOLDER: a tombstone proving a
 # generation ended rather than vanished, written when the brain had nothing to
@@ -387,7 +422,7 @@ def write_journal(text: str, reason: str = "shutdown",
     data_paths.ensure_memory_layout()
     reason = one_line(reason) or "shutdown"
     untrusted_source = one_line(untrusted_source) or None
-    stamp = datetime.now().strftime(_JOURNAL_STAMP_FMT)
+    stamp = _next_journal_stamp()
     path = data_paths.journal_dir() / f"{stamp}-{slugify(reason)}.md"
     n = 2
     while path.exists():

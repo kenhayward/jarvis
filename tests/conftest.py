@@ -148,3 +148,29 @@ async def _no_run_left_mid_flight():
         task.cancel()
     if pending:
         await asyncio.wait(pending, timeout=5)
+
+
+@pytest.fixture
+def needs_symlinks(tmp_path):
+    """Skip unless this machine will let the test BUILD a symlink.
+
+    Creating one on Windows needs SeCreateSymbolicLinkPrivilege -- Developer
+    Mode or an elevated shell -- and a stock account has neither: measured,
+    `OSError [WinError 1314] A required privilege is not held by the
+    client`. PROBED rather than assumed from `sys.platform`, so a machine
+    with Developer Mode on runs these rather than skipping them.
+
+    Read the skip as what it is. The tests that ask for this are refusals --
+    a symlink out of a project, out of the memory folder, a symlinked data
+    dir -- so on a machine that skips them, that half of containment is
+    UNPROVEN. Not proven weak: the production checks resolve both sides and
+    are not platform-specific, so there is no reason to expect them to fail
+    here. But no evidence either, and the difference matters.
+    """
+    probe = tmp_path / "_symlink_probe"
+    try:
+        probe.symlink_to(tmp_path)
+    except OSError as e:
+        pytest.skip(f"cannot create a symlink to test with ({e.strerror}); "
+                    "symlink containment is unproven on this machine")
+    probe.unlink()

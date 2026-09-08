@@ -122,7 +122,8 @@ def test_add_to_index_preserves_hand_written_prose(home):
     path.write_text(
         "# What JARVIS remembers\n\n"
         "Tony asked me to always check the chitauri staging env before prod.\n\n"
-        "- [Old fact](old-fact.md) — some hook\n"
+        "- [Old fact](old-fact.md) — some hook\n",
+        encoding="utf-8",
     )
 
     jm.add_to_index("New fact", "a hook")
