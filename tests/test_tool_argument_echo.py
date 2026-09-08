@@ -467,11 +467,11 @@ def _universe_of(source: str) -> dict:
 
 
 def _universe() -> dict:
-    return _universe_of(SERVER.read_text())
+    return _universe_of(SERVER.read_text(encoding="utf-8"))
 
 
 def test_the_universe_is_the_size_it_should_be():
-    walk = _Walk(SERVER.read_text())
+    walk = _Walk(SERVER.read_text(encoding="utf-8"))
     assert len(walk.handlers) >= 30, sorted(walk.handlers)
     assert all(h.startswith("tool_") for h in walk.handlers), sorted(walk.handlers)
     assert "_said_path" in walk.sanitisers, "a function that only ever returns a sanitiser's value is one"

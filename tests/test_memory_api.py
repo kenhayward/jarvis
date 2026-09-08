@@ -146,7 +146,7 @@ def test_a_memory_comes_back_as_raw_markdown(api):
     r = client.get("/api/memory/memory/a-fact")
 
     assert r.status_code == 200
-    assert r.json() == {"slug": "a-fact", "text": path.read_text()}
+    assert r.json() == {"slug": "a-fact", "text": path.read_text(encoding="utf-8")}
 
 
 def test_a_long_document_is_not_truncated(api):

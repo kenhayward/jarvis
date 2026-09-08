@@ -29,7 +29,7 @@ def _fresh(monkeypatch, tmp_path):
 
 
 def _template_text() -> str:
-    return (Path(__file__).parent.parent / "jarvis_home" / "connections.json").read_text()
+    return (Path(__file__).parent.parent / "jarvis_home" / "connections.json").read_text(encoding="utf-8")
 
 
 def _sha(text: str) -> str:
@@ -49,8 +49,8 @@ def test_the_file_lives_beside_the_brains_own_config(monkeypatch, tmp_path):
 def test_the_template_is_seeded_on_a_fresh_install(monkeypatch, tmp_path):
     dp = _fresh(monkeypatch, tmp_path)
     assert dp.sync_connections() == "seeded"
-    assert dp.connections_path().read_text() == _template_text()
-    record = json.loads(dp.connections_seed_path().read_text())
+    assert dp.connections_path().read_text(encoding="utf-8") == _template_text()
+    record = json.loads(dp.connections_seed_path().read_text(encoding="utf-8"))
     assert record["sha256"] == _sha(_template_text())
 
 
@@ -72,7 +72,7 @@ def test_a_user_who_declared_a_server_keeps_it_through_an_upgrade(
 
     with caplog.at_level("WARNING"):
         assert dp.sync_connections() == "kept"
-    assert dp.connections_path().read_text() == mine
+    assert dp.connections_path().read_text(encoding="utf-8") == mine
     assert str(dp.connections_path()) in caplog.text
 
 
@@ -85,7 +85,7 @@ def test_an_untouched_template_is_brought_up_to_date(monkeypatch, tmp_path):
     dp.connections_seed_path().write_text(json.dumps({"sha256": _sha(old)}))
 
     assert dp.sync_connections() == "updated"
-    assert dp.connections_path().read_text() == _template_text()
+    assert dp.connections_path().read_text(encoding="utf-8") == _template_text()
 
 
 def test_first_run_after_this_ships_keeps_a_file_it_cannot_recognise(
@@ -95,7 +95,7 @@ def test_first_run_after_this_ships_keeps_a_file_it_cannot_recognise(
     mine = json.dumps({"mcpServers": {"notion": {"command": "npx"}}})
     dp.connections_path().write_text(mine)
     assert dp.sync_connections() == "kept"
-    assert dp.connections_path().read_text() == mine
+    assert dp.connections_path().read_text(encoding="utf-8") == mine
 
 
 def test_ensure_brain_home_seeds_the_connections_file_too(monkeypatch, tmp_path):
@@ -151,7 +151,7 @@ def test_the_persona_and_the_connections_file_share_one_mechanism():
     """Two copies of "is this the user's file or ours" is two chances to get
     the destructive half wrong."""
     import data_paths
-    source = Path(data_paths.__file__).read_text()
+    source = Path(data_paths.__file__).read_text(encoding="utf-8")
     assert source.count("KNOWN_TEMPLATE_HASHES") >= 1
     assert "_sync_template(" in source, \
         "sync_persona and sync_connections must go through one function"
@@ -186,7 +186,7 @@ def test_a_declared_server_is_written_into_the_config_the_brain_is_given(
                                      "env": {"NOTION_TOKEN": "secret"}}})
     home = tmp_path / "home"
     home.mkdir()
-    written = json.loads(srv._write_mcp_config(home).read_text())
+    written = json.loads(srv._write_mcp_config(home).read_text(encoding="utf-8"))
 
     assert written["mcpServers"]["notion"]["command"] == "npx"
     assert written["mcpServers"]["notion"]["env"] == {"NOTION_TOKEN": "secret"}
@@ -199,7 +199,7 @@ def test_an_http_server_is_carried_through_unchanged(srv, tmp_path):
     _declare(data_paths, {"linear": {"type": "http", "url": "https://mcp.linear.app/mcp"}})
     home = tmp_path / "home"
     home.mkdir()
-    written = json.loads(srv._write_mcp_config(home).read_text())
+    written = json.loads(srv._write_mcp_config(home).read_text(encoding="utf-8"))
     assert written["mcpServers"]["linear"] == {"type": "http",
                                                "url": "https://mcp.linear.app/mcp"}
 
@@ -207,7 +207,7 @@ def test_an_http_server_is_carried_through_unchanged(srv, tmp_path):
 def test_no_connections_file_changes_nothing(srv, tmp_path):
     home = tmp_path / "home"
     home.mkdir()
-    written = json.loads(srv._write_mcp_config(home).read_text())
+    written = json.loads(srv._write_mcp_config(home).read_text(encoding="utf-8"))
     assert list(written["mcpServers"]) == ["jarvis"]
     assert srv.declared_connections().problems == []
 
@@ -268,7 +268,7 @@ def test_a_user_cannot_replace_jarvis_himself(srv, tmp_path):
     _declare(data_paths, {"jarvis": {"command": "/tmp/evil"}})
     home = tmp_path / "home"
     home.mkdir()
-    written = json.loads(srv._write_mcp_config(home).read_text())
+    written = json.loads(srv._write_mcp_config(home).read_text(encoding="utf-8"))
 
     assert written["mcpServers"]["jarvis"]["command"] != "/tmp/evil"
     assert str(Path(srv.__file__).parent / "jarvis_mcp.py") in \
@@ -361,7 +361,7 @@ def test_the_server_hands_the_brain_the_names_it_accepted(srv, tmp_path):
                           "nope": {"args": ["x"]}})
     home = tmp_path / "home"
     home.mkdir()
-    written = json.loads(srv._write_mcp_config(home).read_text())
+    written = json.loads(srv._write_mcp_config(home).read_text(encoding="utf-8"))
     config = brain.BrainConfig.from_env(home)
     config.connections = sorted(srv.LAST_CONNECTIONS.servers)
 

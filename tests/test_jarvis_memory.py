@@ -27,7 +27,7 @@ def test_a_memory_is_one_file_with_a_readable_name(home):
 
     assert path.parent == home / "memory"
     assert path.name == "tony-prefers-postgres-over-sqlite.md"
-    text = path.read_text()
+    text = path.read_text(encoding="utf-8")
     assert "Tony prefers Postgres over SQLite" in text
     assert "chitauri" in text
 
@@ -37,7 +37,7 @@ def test_writing_the_same_title_twice_updates_rather_than_duplicating(home):
     p = jm.write_memory("A fact", "second version")
 
     assert len(jm.list_memories()) == 1
-    assert "second version" in p.read_text()
+    assert "second version" in p.read_text(encoding="utf-8")
 
 
 def test_slugify_makes_a_filename_out_of_anything_sayable(home):
@@ -79,7 +79,7 @@ def test_a_project_note_appends_rather_than_replacing(home):
     jm.write_project_note("chitauri", "Uses WordPress for the marketing site.")
     p = jm.write_project_note("chitauri", "The 301 redirect was fixed on the 2nd.")
 
-    text = p.read_text()
+    text = p.read_text(encoding="utf-8")
     assert "WordPress" in text and "301 redirect" in text
     assert text.index("WordPress") < text.index("301 redirect"), "chronological"
 
@@ -99,7 +99,7 @@ def test_a_journal_entry_is_timestamped_and_labelled(home):
 
     assert p.parent == home / "journal"
     assert p.name.endswith("-rotation.md")
-    assert "Postgres" in p.read_text()
+    assert "Postgres" in p.read_text(encoding="utf-8")
 
 
 def test_the_latest_journal_is_the_most_recent_and_is_bounded(home):
@@ -127,7 +127,7 @@ def test_add_to_index_preserves_hand_written_prose(home):
 
     jm.add_to_index("New fact", "a hook")
 
-    text = path.read_text()
+    text = path.read_text(encoding="utf-8")
     assert "Tony asked me to always check the chitauri staging env before prod." in text
     assert "- [Old fact](old-fact.md) — some hook" in text
     assert "- [New fact](new-fact.md) — a hook" in text
@@ -142,8 +142,8 @@ def test_two_journal_entries_with_the_same_reason_in_one_minute_both_survive(hom
 
     assert p1 != p2
     assert p1.exists() and p2.exists()
-    assert "first entry" in p1.read_text()
-    assert "second entry" in p2.read_text()
+    assert "first entry" in p1.read_text(encoding="utf-8")
+    assert "second entry" in p2.read_text(encoding="utf-8")
 
     latest = jm.latest_journal()
     assert "second entry" in latest
@@ -276,8 +276,8 @@ def test_two_genuinely_different_titles_that_slugify_identically_both_survive(ho
 
     assert p1 != p2
     assert p1.exists() and p2.exists()
-    assert "first body" in p1.read_text()
-    assert "second body" in p2.read_text()
+    assert "first body" in p1.read_text(encoding="utf-8")
+    assert "second body" in p2.read_text(encoding="utf-8")
     assert len(jm.list_memories()) == 2
 
 
@@ -287,7 +287,7 @@ def test_the_same_title_written_twice_still_produces_one_file(home):
 
     assert p1 == p2
     assert len(jm.list_memories()) == 1
-    text = p1.read_text()
+    text = p1.read_text(encoding="utf-8")
     assert "sqlite" in text
     assert "postgres" not in text
 
@@ -298,7 +298,7 @@ def test_a_title_differing_only_by_apostrophe_or_case_is_the_same_memory(home):
 
     assert p1 == p2
     assert len(jm.list_memories()) == 1
-    text = p1.read_text()
+    text = p1.read_text(encoding="utf-8")
     assert "sqlite" in text
     assert "postgres" not in text
 
@@ -324,7 +324,7 @@ def test_editing_an_old_journal_entrys_mtime_does_not_change_the_latest(home):
 
     # Touch/rewrite the OLDER entry well after the newer one was written.
     time.sleep(0.01)
-    p1.write_text(p1.read_text() + "\ncorrected typo\n")
+    p1.write_text(p1.read_text(encoding="utf-8") + "\ncorrected typo\n")
     future = time.time() + 10_000
     os.utime(p1, (future, future))
 

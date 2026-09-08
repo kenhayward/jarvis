@@ -158,7 +158,7 @@ def test_the_detailed_listing_is_only_ever_used_wrapped(server):
     with no escaping of its own, which is fine ONLY because every caller
     puts the whole listing inside a block. Checked statically, so a caller
     added later has to make that decision on purpose."""
-    tree = ast.parse(SERVER.read_text())
+    tree = ast.parse(SERVER.read_text(encoding="utf-8"))
     wrapped_args = set()
     for node in ast.walk(tree):
         if (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
@@ -267,7 +267,7 @@ def _run_text_columns() -> set[str]:
     `project_name` comes from `POST /api/runs` and from a directory name on
     disk — and it reaches the same headers and the same spoken lines as a
     session does."""
-    src = (REPO / "run_store.py").read_text()
+    src = (REPO / "run_store.py").read_text(encoding="utf-8")
     body = src.split("CREATE TABLE IF NOT EXISTS runs (", 1)[1].split(");", 1)[0]
     out = set()
     for line in body.splitlines():
@@ -367,7 +367,7 @@ def _functions_that_print_a_foreign_field() -> dict:
     source of every module in the repository."""
     out = {}
     for path in MODULES:
-        tree = ast.parse(path.read_text())
+        tree = ast.parse(path.read_text(encoding="utf-8"))
         for node in ast.walk(tree):
             if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 continue
@@ -1616,7 +1616,7 @@ def _compiled_patterns() -> dict[str, str]:
     the method it is called with, so the test has to know about every regex
     in the file, including the ones written after this one.
     """
-    tree = ast.parse(SERVER.read_text())
+    tree = ast.parse(SERVER.read_text(encoding="utf-8"))
     out: dict[str, str] = {}
     for node in ast.walk(tree):
         if not isinstance(node, ast.Assign) or len(node.targets) != 1:
@@ -1638,7 +1638,7 @@ def _compiled_patterns() -> dict[str, str]:
 def _called_with(method: str) -> set[str]:
     """Compiled-pattern names used as `NAME.<method>(…)` in server.py."""
     known = set(_compiled_patterns())
-    tree = ast.parse(SERVER.read_text())
+    tree = ast.parse(SERVER.read_text(encoding="utf-8"))
     return {node.func.value.id for node in ast.walk(tree)
             if isinstance(node, ast.Call)
             and isinstance(node.func, ast.Attribute)

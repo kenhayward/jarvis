@@ -532,7 +532,7 @@ def test_cross_session_inbound_absent_key(monkeypatch, tmp_path):
     assert check.status == STATUS_WARN
     assert "not set" in check.message
     # Read-only: the check must never have written to the file.
-    assert json.loads(p.read_text()) == {"model": "sonnet"}
+    assert json.loads(p.read_text(encoding="utf-8")) == {"model": "sonnet"}
 
 
 def test_cross_session_inbound_set_to_accept(monkeypatch, tmp_path):

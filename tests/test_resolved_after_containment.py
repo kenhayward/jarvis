@@ -119,7 +119,7 @@ def _sites() -> dict:
     """{`module.function`: [derivations]} for the whole class."""
     out = {}
     for path in MODULES:
-        tree = ast.parse(path.read_text())
+        tree = ast.parse(path.read_text(encoding="utf-8"))
         for fn in ast.walk(tree):
             if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 continue

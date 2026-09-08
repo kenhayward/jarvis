@@ -41,7 +41,7 @@ SERVER = Path(__file__).parent.parent / "server.py"
 # --- wall 1: static ------------------------------------------------------
 
 def _wrap_calls() -> list[ast.Call]:
-    tree = ast.parse(SERVER.read_text())
+    tree = ast.parse(SERVER.read_text(encoding="utf-8"))
     return [n for n in ast.walk(tree)
             if isinstance(n, ast.Call)
             and isinstance(n.func, ast.Name)

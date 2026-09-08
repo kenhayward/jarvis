@@ -80,14 +80,14 @@ def test_is_casual_question_survives():
 
 
 def test_no_sentinel_string_remains():
-    text = (ROOT / "jarvis_platform" / "macos" / "launcher.py").read_text()
+    text = (ROOT / "jarvis_platform" / "macos" / "launcher.py").read_text(encoding="utf-8")
     assert "JARVIS TASK COMPLETE" not in text
-    assert "JARVIS TASK COMPLETE" not in (ROOT / "server.py").read_text()
+    assert "JARVIS TASK COMPLETE" not in (ROOT / "server.py").read_text(encoding="utf-8")
 
 
 def test_active_session_json_not_referenced():
     for name in ("server.py", "work_mode.py"):
-        assert "active_session.json" not in (ROOT / name).read_text()
+        assert "active_session.json" not in (ROOT / name).read_text(encoding="utf-8")
 
 
 # ---------------------------------------------------------------------------
@@ -149,7 +149,7 @@ def test_executor_injection_into_actions_is_gone(env):
     importlib.reload(actions)
     assert not hasattr(actions, "set_executor")
     assert not hasattr(actions, "_executor")
-    assert "set_executor" not in (ROOT / "server.py").read_text()
+    assert "set_executor" not in (ROOT / "server.py").read_text(encoding="utf-8")
 
 
 def test_self_work_and_notify_is_gone(env):
@@ -206,7 +206,7 @@ def test_fix_self_route_is_gone(api):
 
 
 def test_no_tasks_or_fix_self_references_remain():
-    text = (ROOT / "server.py").read_text()
+    text = (ROOT / "server.py").read_text(encoding="utf-8")
     assert "/api/tasks" not in text
     assert "fix-self" not in text
 
@@ -251,7 +251,7 @@ def test_no_overclaimed_capability_strings_remain():
     read their calendar, mail, and notes autonomously — reactivating any of
     that text (even outside JARVIS_SYSTEM_PROMPT by name) would reintroduce
     the overclaim."""
-    text = (ROOT / "server.py").read_text()
+    text = (ROOT / "server.py").read_text(encoding="utf-8")
     banned_phrases = (
         "YOUR CAPABILITIES (these are REAL and ACTIVE",
         "You CAN see what's on",
@@ -274,7 +274,7 @@ def test_no_module_level_string_claims_screen_calendar_mail_or_notes():
     import ast
     import re
 
-    text = (ROOT / "server.py").read_text()
+    text = (ROOT / "server.py").read_text(encoding="utf-8")
     tree = ast.parse(text)
     claim_re = re.compile(
         r"\byou can (see|read)\b.{0,40}\b(screen|calendar|mail|email|notes)\b",
@@ -348,7 +348,7 @@ def test_server_no_longer_imports_the_screen_calendar_and_mail_readers_it_droppe
     """The imports the deleted lookups were the only users of. Leaving them
     bound in the module namespace would keep `server.describe_screen` a live
     attribute — one line away from being called again."""
-    server_text = (ROOT / "server.py").read_text()
+    server_text = (ROOT / "server.py").read_text(encoding="utf-8")
     for name in ("describe_screen", "get_active_windows", "refresh_calendar_cache",
                  "format_schedule_summary", "format_events_for_context",
                  "get_unread_messages", "format_unread_summary"):
@@ -369,7 +369,7 @@ def test_no_action_tag_is_emitted_or_parsed_any_more():
     (JARVIS_SYSTEM_PROMPT/generate_response) went in the previous batch, its
     parser and router go in this one, and nothing left in the server writes a
     tag or looks for one."""
-    text = (ROOT / "server.py").read_text()
+    text = (ROOT / "server.py").read_text(encoding="utf-8")
     for tag in ("[ACTION:BUILD]", "[ACTION:BROWSE]", "[ACTION:OPEN_TERMINAL]",
                 "[ACTION:SCREEN]", "[ACTION:RESEARCH]", "[ACTION:PROMPT_PROJECT]"):
         assert tag not in text, f"{tag} has no parser left to reach"
@@ -384,7 +384,7 @@ def test_the_context_refresh_thread_is_gone():
     The user noticed Calendar launching and asked why. That is the bug.
     """
     import server
-    source = pathlib.Path(server.__file__).read_text()
+    source = pathlib.Path(server.__file__).read_text(encoding="utf-8")
     assert "_ctx_cache" not in source
     assert "_refresh_context_sync" not in source
     assert "Context refresh thread" not in source
@@ -396,7 +396,7 @@ def test_restart_does_not_hardcode_host_and_port():
     origin — and Chrome scopes microphone permission per origin INCLUDING the
     port, so the user silently lost their mic."""
     import server
-    source = pathlib.Path(server.__file__).read_text()
+    source = pathlib.Path(server.__file__).read_text(encoding="utf-8")
     i = source.index("async def api_restart")
     body = source[i:i + 1200]
     assert "sys.argv" in body, "restart must re-exec with the real arguments"

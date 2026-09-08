@@ -387,7 +387,7 @@ def test_a_replaced_file_at_the_same_path_and_size_is_read_from_the_start(tmp_pa
     cache = us.Cache()
     us.report(roots=[a], now=NOW, cache=cache)
 
-    body = p.read_text().replace('"output_tokens": 111', '"output_tokens": 222')
+    body = p.read_text(encoding="utf-8").replace('"output_tokens": 111', '"output_tokens": 222')
     p.unlink()
     p.write_text(body)
     assert len(body) == p.stat().st_size
@@ -641,7 +641,7 @@ def test_a_non_numeric_token_count_is_zero_not_a_crash(tmp_path, garbage):
     a, _ = roots(tmp_path)
     p = write_transcript(a, cwd="/p/one", session_id="s1",
                          turns=[dict(when=NOW - HOUR, out=5)])
-    body = json.loads(p.read_text().strip().splitlines()[-1])
+    body = json.loads(p.read_text(encoding="utf-8").strip().splitlines()[-1])
     body["message"]["usage"]["output_tokens"] = garbage
     with open(p, "a") as fh:
         fh.write(json.dumps(body) + "\n")
@@ -662,7 +662,25 @@ def _unreadable(path: Path) -> None:
     os.chmod(path, 0o000)
 
 
-@pytest.mark.skipif(os.geteuid() == 0, reason="root can read anything")
+# Both tests below need a file this process genuinely cannot read, and there
+# are two ways not to have one.
+#
+# Root is the familiar one: it reads regardless of the mode bits.
+#
+# Windows is the other, and it is not a permissions question but a missing
+# subject. `os.chmod(p, 0o000)` there only sets the read-only ATTRIBUTE —
+# measured, CPython 3.12: the mode came back `0o444` and `p.read_text()`
+# returned the contents. So `_unreadable` produces a perfectly readable file
+# and the tests would fail on a premise that was never established, which is
+# worse than not running. `os.geteuid` is itself POSIX-only, hence the
+# `hasattr` rather than a bare call — evaluating it at import is what took
+# the whole module down before.
+_cannot_be_unreadable = pytest.mark.skipif(
+    sys.platform == "win32" or (hasattr(os, "geteuid") and os.geteuid() == 0),
+    reason="root reads anything; Windows chmod cannot remove read access")
+
+
+@_cannot_be_unreadable
 def test_a_transcript_that_could_not_be_read_is_not_measured(tmp_path):
     a, _ = roots(tmp_path)
     p = write_transcript(a, cwd="/p/one", session_id="s1",
@@ -679,7 +697,7 @@ def test_a_transcript_that_could_not_be_read_is_not_measured(tmp_path):
     assert report.files == 0
 
 
-@pytest.mark.skipif(os.geteuid() == 0, reason="root can read anything")
+@_cannot_be_unreadable
 def test_one_unreadable_file_does_not_unmeasure_the_readable_ones(tmp_path):
     a, _ = roots(tmp_path)
     good = write_transcript(a, cwd="/p/one", session_id="good",

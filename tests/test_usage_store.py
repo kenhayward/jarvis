@@ -203,7 +203,7 @@ def test_an_unwritable_location_does_not_raise(store, monkeypatch, tmp_path):
 def test_the_file_is_json_a_human_can_read(store):
     import data_paths
     store.record(LIVE_EVENT, now=1000.0)
-    body = json.loads(data_paths.usage_path().read_text())
+    body = json.loads(data_paths.usage_path().read_text(encoding="utf-8"))
     assert body["windows"]["five_hour"]["utilization"] == 55.0
 
 

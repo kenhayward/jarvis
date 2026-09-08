@@ -1051,7 +1051,7 @@ def test_one_bad_line_does_not_freeze_the_snapshot(tmp_path, monkeypatch):
     write_roster(root, pid=os.getpid(), session_id="s", cwd="/p/one", name="one")
     path = write_transcript(root, cwd="/p/one", session_id="s",
                             title="T", last_prompt="P")
-    lines = path.read_text().splitlines()
+    lines = path.read_text(encoding="utf-8").splitlines()
     lines.append(json.dumps({
         "type": "assistant", "isSidechain": False, "sessionId": "s",
         "message": {"role": "assistant",

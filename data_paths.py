@@ -147,7 +147,7 @@ def _recorded_seed_hash(seed: Path) -> Optional[str]:
     match that would send an edited file to the overwriter.
     """
     try:
-        body = json.loads(seed.read_text())
+        body = json.loads(seed.read_text(encoding="utf-8"))
     except FileNotFoundError:
         return None
     except (OSError, ValueError) as e:
@@ -168,7 +168,15 @@ def _write_atomically(path: Path, text: str) -> bool:
     try:
         fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=f".{path.name}-")
         try:
-            with os.fdopen(fd, "w") as fh:
+            # encoding= is not optional: the default is the LOCALE's, which
+            # is cp1252 on a stock Windows, and every file this writes (the
+            # persona above all) is full of em-dashes. Measured, CPython
+            # 3.12: the write raised UnicodeEncodeError — a ValueError, so
+            # the `except OSError` below did NOT catch it, and it came out
+            # of here into `_sync_template` and took down every caller that
+            # seeds a brain home. Adding the encoding took the Windows suite
+            # from 443 errors to 11, and 1788 passing to 2215.
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
                 fh.write(text)
             os.replace(tmp, path)
         except BaseException:
@@ -229,7 +237,7 @@ def _sync_template(template: Path, target: Path, seed: Path,
     key = str(target)
 
     try:
-        shipped = template.read_text()
+        shipped = template.read_text(encoding="utf-8")
     except OSError as e:                                # pragma: no cover
         log.warning(f"data_paths: cannot read the {what} template ({e})")
         return "kept"

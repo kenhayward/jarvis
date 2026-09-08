@@ -21,7 +21,7 @@ def _mode(path):
 def test_a_new_token_is_created_readable_only_by_its_owner():
     token = data_paths.ensure_tool_token()
     path = data_paths.tool_token_path()
-    assert token and path.read_text().strip() == token
+    assert token and path.read_text(encoding="utf-8").strip() == token
     if os.name != "nt":
         assert _mode(path) == 0o600, oct(_mode(path))
 
@@ -50,7 +50,7 @@ def test_an_empty_file_is_filled_rather_than_trusted():
 
     token = data_paths.ensure_tool_token()
     assert token.strip() == token and len(token) > 20
-    assert path.read_text().strip() == token
+    assert path.read_text(encoding="utf-8").strip() == token
 
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX symlink semantics")
@@ -69,7 +69,7 @@ def test_a_symlink_planted_at_the_path_is_refused(tmp_path):
 
     with pytest.raises(OSError):
         data_paths.ensure_tool_token()
-    assert victim.read_text() == "not-a-token"
+    assert victim.read_text(encoding="utf-8") == "not-a-token"
 
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX fifo")
