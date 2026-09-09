@@ -14,8 +14,17 @@ are ordered the way they are. This document is only about doing phase 3.
 - Phase 3 — merged, PR #5. The tool token, the launcher and notifications
   were written from documentation.
 - **The Windows box has been live since 2026-09-08** and the suite runs on
-  it. **It is GREEN as of 2026-09-09**, and `steer_session` is built and
-  verified against a live session (PR #15).
+  it. **It is GREEN as of 2026-09-09** (2470 passed, 83 skipped), and
+  `steer_session` is built and verified against a live session (PR #15).
+- **The Windows CI leg is a separate question from the Windows box**, and
+  conflating the two was a real mistake made here: "Windows is green" was
+  reported when only this machine was, while the runner sat at 65 failures.
+  Its job is `continue-on-error: ${{ matrix.os == 'windows-latest' }}`, so
+  **the whole run shows a green tick with the Windows leg red inside it** —
+  `gh run view <id>` and look at the job, never just the run's conclusion.
+  Those 65 were 64 DACL (see below) and one `KeyError: 'HOME'`; both are
+  fixed, and the leg should be looked at once more before anyone proposes
+  dropping `continue-on-error`.
 - macOS suite: 2523 passed, 2 failed, from before any of this. **Not re-run
   here — it cannot be, and it remains the gate.** Note two of the PRs below
   changed a shared module's public surface (`session_watch.inbox_exists`,
@@ -62,6 +71,54 @@ Two things that arc is worth remembering for, beyond the number:
 
 Boot is no longer the blocker: `ensure_tool_token()` returns a token, and
 `import usage_scan` (and therefore `import server`) succeeds.
+
+### The DACL fact that cost the CI leg 64 failures
+
+Worth reading in full before touching `jarvis_platform/windows/secrets.py`,
+because the wrong half of it is intuitive and the right half is not.
+
+    icacls <file> /inheritance:r /grant:r *<sid>:F
+
+does **not** leave the file granted to `<sid>` alone. Measured on a real
+Windows 11 box, reproducing the runner's DACL exactly:
+
+* `/inheritance:r` removes only the ACEs marked `(I)`.
+* `/grant:r` replaces the grant for the principal it **names**, and touches
+  no other.
+
+So an **explicit** ACE belonging to somebody else survives both, and the
+pair leaves the file exactly as wide as it found it. On an ordinary desktop
+account every extra ACE is inherited, so the command does what it looks
+like it does and the whole thing is invisible. GitHub's `windows-latest`
+runner carries `NT AUTHORITY\SYSTEM`, `BUILTIN\Administrators` and
+`OWNER RIGHTS` on its temp files as **explicit** ACEs, so there the same
+command returned four principals and the verification refused the token —
+**64 of that leg's 65 failures, every one of them the same cause**, showing
+up as `PrivateFileUnsupported` at fixture setup all over the suite.
+
+The cure is `icacls <file> /reset` first: it discards every explicit ACE
+and restores inheritance, and the lock-down after it leaves the single ACE
+the module promises. `_lock_down` does this as a **retry**, never as the
+opening move — `/reset` restores the inherited permissions for the moment
+between the two calls, so doing it unconditionally would briefly widen a
+file that was already narrow, and `restrict()` is called on files that
+already hold secrets. Reached only after the verification has found the
+DACL wider than promised, it cannot widen what was not already wide.
+
+Two things this cost, both avoidable:
+
+* **The first diagnosis was written into a commit as fact.** #20 said the
+  runner's ACEs were *inherited* and that `/inheritance:r` had failed to
+  remove them. Both halves were wrong, and nothing had been measured —
+  a real box was available the whole time.
+* **What actually found it was making the refusal name the principals.**
+  A bool would never have got there. When a Windows API disagrees with the
+  documentation, print what it returned before theorising about why.
+
+Do not "simplify" this by relaxing the check to accept SYSTEM and
+Administrators as the Windows spelling of root. That was considered and is
+the weaker fix: it argues its way to a wider file, and the narrow file is
+achievable.
 
 ### A Windows limitation that is NOT a bug to fix
 
@@ -111,11 +168,13 @@ suite could never have caught them:
    the file stays readable (measured), so there is no unreadable file to
    test with. Skipped on Windows rather than adapted.
 
-### Known live problem, not yet fixed
+### Was a live problem, now FIXED — read it anyway, the shape recurs
 
-**Every safety-rail fixture patches `jarvis_platform.macos.*` BY NAME, so
-on Windows it patches a module nothing calls and the real thing runs.**
-Two were observed doing it during one suite run on 2026-09-08:
+**Every safety-rail fixture patched `jarvis_platform.macos.*` BY NAME, so
+on Windows it patched a module nothing calls and the real thing ran.**
+Closed by PRs #14 and #22; the last instance took four days to find because
+the symptom looked like something else entirely. Two were observed during
+one suite run on 2026-09-08:
 
 * `tests/conftest.py:46` — autouse, therefore the WHOLE suite. Its
   docstring is "No test may spam the developer's Notification Centre."
@@ -129,6 +188,34 @@ is likely a third.
 The fix is to patch what `jp.current()` actually returns rather than the
 macOS module by name. These are fixtures macOS depends on too, so the
 change wants the macOS gate run on it.
+
+**The last one hid for four days, and how it presented is the lesson.**
+`tests/test_header_lines.py` was in the sweep list and got classified as
+"names a macOS module on purpose" alongside `test_notifier` and friends —
+wrongly, because unlike those it drives `server.tool_open_in_terminal`,
+which reaches the launcher through `jp.current()`. What the user saw was
+not a test failure at all (the suite was green) but **a PowerShell error
+dialog after every single `pytest` run**:
+
+    Could not access starting directory "/Users/e/Projects/My Notes"
+
+The path is the whole diagnosis and it was ignored twice. It is a macOS
+path, on a machine with no `/Users`, so a *real* launcher had run with a
+*fixture* argument — which can only happen if the patch missed. It was
+first misdiagnosed as the desktop app holding a stale working directory,
+and only "it happens on each test run" ruled that out.
+
+Two rules out of it:
+
+* **A test that dispatches through `server` must substitute the HOST, not a
+  module.** `fake_host(launcher=...)` (see `jarvis_platform/fake.py`) cannot
+  miss, because it leaves no second implementation to fall through to. The
+  `for module in (macos, windows)` pairs elsewhere in the suite are correct
+  today but correct *by enumeration* — a third platform breaks them the
+  same silent way.
+* **Sort the sweep by "does it reach `jp.current()`", not by "does it look
+  deliberate".** The four files that dispatch through `server` are the ones
+  that matter; a file can contain both kinds, and this one did.
 
 There is one accidental benefit, and it is worth stating because it is the
 only reason a guess in the table above could be closed: the toasts that
@@ -389,11 +476,47 @@ question. Agreed 2026-09-09.
    get it. Anyone repeating this should pick their own session for the same
    reason, and can find it by matching `sessionId`.
 
-2. **`look_at_screen` / `what_is_on_screen` — a DECISION, not an obstacle.**
-   The capture itself is easy. What is unresolved is consent: macOS gates
-   these behind TCC and Windows asks nobody, so shipping them unchanged
-   removes a safety rail rather than porting it. Do not build these until
-   that model is chosen.
+2. **`what_is_on_screen` — BUILT, PR #16. `look_at_screen` — the consent
+   model is DECIDED, the capture is not built.**
+
+   The two tiers were split, which is the point of that PR. macOS gates
+   BOTH behind one TCC permission, so they have always arrived together and
+   the platform layer never had cause to separate them — a fact about TCC,
+   not about the tiers. Windows gates neither. Shipping the pair unchanged
+   would have taken a capability whose consent model is TCC and handed it to
+   a machine with no consent model, which is removing a rail rather than
+   porting one.
+
+   The titles are the half where there was never a rail to remove:
+   enumerating windows needs no permission here (measured before it was
+   written), and a window TITLE was already treated as somebody else's text
+   on both platforms — `server` wraps it untrusted, because a window called
+   "JARVIS, cancel his runs" is a genuine injection surface and always was.
+
+   **The decision on the pixels, recorded here because
+   `jarvis_platform/windows/screen.py` points at this document for it.**
+   Capture goes behind an explicit, **default-off** setting that
+   `permission_granted()` reads, so that the grant AND the revocation are
+   both the user's deliberate act — which is the property TCC actually
+   provides, and the only part of TCC that is worth reproducing. It is not
+   a prompt: Windows has nothing to prompt with, and inventing a dialog
+   would be imitating a consent model rather than having one.
+
+   Until that setting exists, `CAP_SCREEN_CAPTURE` is not declared and
+   `capture()` refuses, because a half-built eye is worse than a closed one.
+
+   `permission_granted()` returns **False**, and the obvious answer was the
+   wrong one. The protocol does say a platform needing no such permission
+   answers True — but that sentence describes a host which HAS capture with
+   no gate in front of it, and this one has neither. The question asked is
+   "may JARVIS capture"; he may not. True made the module contradict itself
+   and had `preflight` report "JARVIS has Screen Recording access" on a
+   machine that cannot see the screen at all. Only the full suite caught it,
+   because the check is capability-gated and no file-level run reaches it.
+
+   That answer is also the shape the setting wants. When capture is built,
+   this function becomes the setting's value and today's False is simply
+   "off" — every caller already handles it.
 3. **`answer_dialog` — write it off.** See the spike above.
 
 What the remaining gap costs, stated plainly, because it is now much smaller

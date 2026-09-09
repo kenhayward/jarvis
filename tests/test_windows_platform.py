@@ -232,10 +232,14 @@ def test_the_refusal_says_which_of_three_things_went_wrong(monkeypatch):
 
     Told "not granted solely to this user" about a file JARVIS wrote itself
     ten milliseconds earlier, they go looking for an intruder rather than at
-    the ACL that actually disagreed. The Windows CI leg does exactly this on
+    the ACL that actually disagreed. The Windows CI leg did exactly this on
     every run — refusing its own freshly created token, while the same code
-    accepts it on an ordinary desktop account — and the message as written
-    cannot say which of the three it hit.
+    accepted it on an ordinary desktop account — and the message as first
+    written could not say which of the three it had hit. Naming the
+    principals is what identified the cause: they were EXPLICIT ACEs, which
+    `/inheritance:r` does not touch. `_lock_down` clears them and retries
+    now, so this reason reaches a user far less often — but it is what found
+    the bug, and it is what the next unfamiliar DACL will be read through.
     """
     path = "C:\\data\\jarvis\\tool-token"
     monkeypatch.setattr(win_secrets, "_identity",
@@ -310,12 +314,17 @@ def test_a_lockdown_that_reports_success_but_changed_nothing_still_raises(
     """icacls exiting 0 says the command was ACCEPTED, not that the DACL now
     reads the way this module promises.
 
-    That gap is not hypothetical: on the Windows CI runner
-    `/inheritance:r /grant:r` exits 0 and leaves all three inherited ACEs in
-    place, with our grant correctly added and nothing removed. Unverified,
-    the file is created, reported private, and only refused later by
-    `adopt_private` — far from the cause, and after a token the promise does
-    not cover has already been written into it.
+    That gap is not hypothetical: it is what the Windows CI runner did on
+    every run, with our grant correctly added and nothing removed.
+    Unverified, the file is created, reported private, and only refused
+    later by `adopt_private` — far from the cause, and after a token the
+    promise does not cover has already been written into it.
+
+    The case that reaches HERE is now the one the reset could not save: the
+    listing keeps its extra ACEs after both passes. The ordinary runner
+    shape is handled instead by
+    `test_a_lockdown_that_left_explicit_aces_resets_and_tries_again`, which
+    is where the (I)-versus-explicit distinction is pinned.
     """
     monkeypatch.setattr(win_secrets, "_identity",
                         ("runnervm\\runneradmin", "S-1-5-21-9"))
@@ -324,9 +333,11 @@ def test_a_lockdown_that_reports_success_but_changed_nothing_still_raises(
         if "/grant:r" in argv:
             # Exit 0 with a body saying it did nothing. icacls really does
             # this, and that line is what tells "it declined" apart from "it
-            # worked and something undid it afterwards" — the question still
-            # open about the runner, and unanswerable from the rc alone.
+            # worked and something undid it afterwards" — unanswerable from
+            # the rc alone, which is why the message quotes this.
             return 0, "Successfully processed 0 files; Failed processing 1 files"
+        if "/reset" in argv:
+            return 0, "Successfully processed 1 files; Failed processing 0 files"
         return 0, ("C:\\x\\tool-token RUNNERVM\\runneradmin:(F)\n"
                    "                 NT AUTHORITY\\SYSTEM:(I)(F)\n"
                    "                 BUILTIN\\Administrators:(I)(F)\n"
@@ -388,3 +399,136 @@ def test_the_macos_secrets_still_keep_their_own_promise(tmp_path):
     os.close(fd)
     assert stat.S_IMODE(os.stat(path).st_mode) == 0o600
     assert mac_secrets.create_private(path) is None
+
+
+# --- the explicit ACEs the CI runner actually had --------------------------
+
+# MEASURED, by reproducing the runner's DACL on a real Windows 11 box: add
+# SYSTEM, Administrators and OWNER RIGHTS to a file EXPLICITLY, run the
+# lock-down, and this is what comes back -- our grant added and nothing
+# removed, which is exactly what the runner reported.
+_ICACLS_RUNNER = (
+    "C:\\x\\tool-token RUNNERVM\\runneradmin:(F)\n"
+    "                  OWNER RIGHTS:(F)\n"
+    "                  BUILTIN\\Administrators:(F)\n"
+    "                  NT AUTHORITY\\SYSTEM:(F)\n"
+    "\n"
+    "Successfully processed 1 files; Failed processing 0 files\n")
+
+_ICACLS_RUNNER_AFTER_RESET = (
+    "C:\\x\\tool-token RUNNERVM\\runneradmin:(F)\n"
+    "\n"
+    "Successfully processed 1 files; Failed processing 0 files\n")
+
+
+def test_a_lockdown_that_left_explicit_aces_resets_and_tries_again(monkeypatch):
+    """The Windows CI leg's whole failure, and the correction of a guess.
+
+    `/inheritance:r` removes only the ACEs marked `(I)`, and `/grant:r`
+    replaces the grant for the principal it NAMES. An EXPLICIT ACE for
+    anybody else survives both, so the pair leaves the file exactly as wide
+    as it found it. The runner's temp files carry SYSTEM, Administrators and
+    OWNER RIGHTS explicitly -- NOT inherited, which is what the commit
+    before this one assumed -- which is why identical code yields one ACE on
+    an ordinary desktop account and four there. Sixty three of that leg's
+    sixty five failures were this.
+
+    `icacls <file> /reset` discards every explicit ACE and restores
+    inheritance; the lock-down after it leaves the one ACE this module
+    promises. Both halves are driven against the real tool by
+    `test_the_reset_and_lockdown_really_do_this_to_a_real_file` below.
+    """
+    calls = []
+    monkeypatch.setattr(win_secrets, "_identity",
+                        ("runnervm\\runneradmin", "S-1-5-21-9"))
+
+    def _fake_run(*argv):
+        calls.append(list(argv))
+        if "/grant:r" in argv or "/reset" in argv:
+            return 0, "Successfully processed 1 files; Failed processing 0 files"
+        # A listing: four principals until the reset, one after it.
+        done = any("/reset" in c for c in calls)
+        return 0, (_ICACLS_RUNNER_AFTER_RESET if done else _ICACLS_RUNNER)
+
+    monkeypatch.setattr(win_secrets, "_run", _fake_run)
+    win_secrets._lock_down("C:\\x\\tool-token")
+
+    flags = [c[2] if len(c) > 2 else "" for c in calls]
+    assert flags == ["/inheritance:r", "", "/reset", "/inheritance:r", ""], \
+        "grant, verify, reset, grant, verify -- in that order"
+
+
+def test_the_reset_is_a_retry_and_never_the_opening_move(monkeypatch):
+    """`/reset` restores the INHERITED permissions for the moment between
+    the two calls, so doing it unconditionally would briefly widen a file
+    that was already narrow -- and `restrict()` is called on files that
+    already hold secrets. Reached only once the verification has found the
+    DACL wider than promised, it cannot widen what was not already wide.
+    """
+    calls = []
+    monkeypatch.setattr(win_secrets, "_identity", ("desktop-abc\\ken", "S-1-5-21-9"))
+
+    def _fake_run(*argv):
+        calls.append(list(argv))
+        return (0, "") if "/grant:r" in argv else (0, _ICACLS_OURS)
+
+    monkeypatch.setattr(win_secrets, "_run", _fake_run)
+    win_secrets._lock_down("C:\\data\\jarvis\\tool-token")
+
+    assert not any("/reset" in c for c in calls), \
+        "the DACL was already ours; nothing should have been reset"
+
+
+def test_an_unreadable_ace_list_is_not_reset_on_a_guess(monkeypatch):
+    """The other half of the same rule. A listing this module cannot parse
+    says nothing about what is in it, so clearing the file's ACEs on that
+    basis would be widening it on a guess. It refuses instead."""
+    calls = []
+    monkeypatch.setattr(win_secrets, "_identity", ("desktop-abc\\ken", "S-1-5-21-9"))
+
+    def _fake_run(*argv):
+        calls.append(list(argv))
+        return (0, "") if "/grant:r" in argv else (0, "surprising\n")
+
+    monkeypatch.setattr(win_secrets, "_run", _fake_run)
+    with pytest.raises(PrivateFileUnsupported) as caught:
+        win_secrets._lock_down("C:\\x\\tool-token")
+
+    assert not any("/reset" in c for c in calls)
+    assert "could not parse" in str(caught.value)
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="drives the real icacls")
+def test_the_reset_and_lockdown_really_do_this_to_a_real_file(tmp_path):
+    """The measurement the three mocked tests above stand on.
+
+    This file's premise is that it mocks the one subprocess seam and so runs
+    anywhere; the cost is that it cannot prove the argv do what they claim.
+    This one pays that cost on a real box, for the single decision where a
+    wrong guess cost the Windows leg sixty three failures.
+
+    It reproduces the runner's DACL rather than waiting to meet it again:
+    the three principals are added EXPLICITLY, which is the state that
+    defeats `/inheritance:r`.
+    """
+    token = tmp_path / "tool-token"
+    token.write_bytes(b"secret")
+
+    # S-1-5-18 SYSTEM, S-1-5-32-544 Administrators, S-1-3-4 OWNER RIGHTS.
+    # By SID, because those names are localised on a non-English Windows.
+    rc, out = win_secrets._run(
+        "icacls", str(token), "/grant", "*S-1-5-18:(F)",
+        "*S-1-5-32-544:(F)", "*S-1-3-4:(F)")
+    if rc != 0:                                          # pragma: no cover
+        pytest.skip(f"could not stage the explicit ACEs: {out.strip()[:200]}")
+
+    account, _sid = win_secrets._current_identity()
+    staged, _why = win_secrets._dacl_principals(token)
+    assert staged is not None and len(staged) > 1, \
+        "the staging must actually have produced the runner's shape"
+
+    win_secrets._lock_down(token)
+
+    assert win_secrets._dacl_principals(token)[0] == [account.lower()], \
+        "one ACE, this user, against the real tool"
+    assert token.read_bytes() == b"secret", "and the contents are untouched"

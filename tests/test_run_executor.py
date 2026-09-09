@@ -825,7 +825,16 @@ async def test_a_run_still_gets_the_ordinary_environment(env, monkeypatch):
 
     child = json.loads(marker.read_text(encoding="utf-8"))
     assert child.get("PATH") == os.environ["PATH"]
-    assert child.get("HOME") == os.environ["HOME"]
+    # HOME is POSIX, and naming it directly was the last thing in this suite
+    # still assuming a Mac: the Windows CI leg raised `KeyError: 'HOME'` here
+    # while every developer box passed, because a shell started from Git Bash
+    # exports one and the runner's does not. Windows spells the same thing
+    # USERPROFILE, and the docstring's point -- a child that cannot find the
+    # user's own Claude configuration -- is about whichever this platform
+    # uses. `child_env` passes both through untouched; only the test had a
+    # side.
+    home_var = "USERPROFILE" if os.name == "nt" else "HOME"
+    assert child.get(home_var) == os.environ[home_var]
     assert child.get("CLAUDE_CONFIG_DIR") == "/keep/me"
     assert child.get("JARVIS_MARKER") == "kept"
 

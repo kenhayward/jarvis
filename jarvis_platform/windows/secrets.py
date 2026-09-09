@@ -156,8 +156,8 @@ def _current_identity() -> tuple[str, str]:
     return _identity
 
 
-def _lock_down(path: Path) -> None:
-    """Break inheritance and grant exactly this user. Raises on failure.
+def _grant_to_us_alone(path: Path, sid: str) -> str:
+    """One lock-down pass. Returns icacls's own output; raises if it refused.
 
     `/inheritance:r` removes the inherited ACEs rather than converting them
     to explicit ones — `:e` would copy Administrators and SYSTEM in, which
@@ -167,44 +167,102 @@ def _lock_down(path: Path) -> None:
     The SID form (`*S-1-...`) rather than the name: a domain account's name
     depends on how it is spelled and its SID does not.
     """
-    _account, sid = _current_identity()
     rc, out = _run("icacls", str(path), "/inheritance:r", "/grant:r", f"*{sid}:F")
     if rc != 0:
         raise PrivateFileUnsupported(
             f"could not restrict {path} to this user: {out.strip()[:200]}")
+    return out
+
+
+def _lock_down(path: Path) -> None:
+    """Leave the file granted to this user and nobody else. Raises otherwise.
+
+    Two passes, because one is not always enough, and the reason is exact.
+    MEASURED on a real Windows box, reproducing the CI runner's DACL:
+
+    * `/inheritance:r` removes only the ACEs marked `(I)`.
+    * `/grant:r` replaces the grant for the principal it NAMES, and touches
+      no other.
+
+    So an EXPLICIT ACE belonging to somebody else survives both, and the
+    pair leaves the file exactly as wide as it found it. Add SYSTEM,
+    Administrators and OWNER RIGHTS to a file explicitly and run the
+    lock-down: four ACEs come back, our grant among them and nothing gone.
+    Run `icacls <file> /reset` first — it discards every explicit ACE and
+    restores inheritance — and the same lock-down leaves the one ACE this
+    module promises.
+
+    That is the whole of the CI failure, and it corrects the guess in the
+    commit before this one. The runner's temp files carry those three as
+    EXPLICIT ACEs, not inherited ones, which is why identical code yields a
+    single ACE on an ordinary desktop account and four on the runner. Sixty
+    three of the Windows leg's sixty five failures were this.
+
+    The reset is a RETRY rather than the opening move, deliberately. It
+    restores the inherited permissions for the moment between the two
+    calls, so doing it unconditionally would briefly widen a file that was
+    already narrow — `restrict()` is called on files that already hold
+    secrets. Reached only after the verification below has found the DACL
+    wider than promised, it can never widen what was not already wide.
+    """
+    _account, sid = _current_identity()
 
     # VERIFIED, not assumed. icacls exiting 0 says the command was accepted;
-    # it does not say the DACL now reads the way this function's docstring
-    # promises, and `create_private` publishes that promise to everything
-    # that trusts the token afterwards.
-    #
-    # The gap is real and is why this check exists. On the Windows CI runner
-    # `/inheritance:r /grant:r` exits 0 and leaves the three inherited ACEs
-    # in place — measured, the DACL there reads
-    #
-    #     runnervm\runneradmin, nt authority\system,
-    #     builtin\administrators, owner rights
-    #
-    # with our grant correctly added and nothing removed. Without this the
-    # file is created, reported private, and only refused later by
-    # `adopt_private` on the next call — far from the cause, and after a
-    # token the promise does not cover has already been written into it.
-    #
-    # Failing here instead means `create_private` deletes the file (see its
-    # handler) and startup stops with the reason, which is the behaviour the
-    # docstrings have always described.
-    why = _dacl_mismatch(path)
-    if why is not None:
-        # icacls's OWN words are carried too, not just the resulting DACL.
-        # `rc == 0` is not the same as "it did the work": icacls can print
-        # "Successfully processed 0 files; Failed processing 1 files" and
-        # still exit zero, and that line is the difference between "it
-        # declined" and "it succeeded and something undid it afterwards" —
-        # which is exactly the question left open about the CI runner.
-        # Without this the two look identical from here.
-        raise PrivateFileUnsupported(
-            f"icacls reported success but {path} is still not private "
-            f"({why}); icacls said {out.strip()[:200]!r}")
+    # it does not say the DACL now reads the way this function promises, and
+    # `create_private` publishes that promise to everything that trusts the
+    # token afterwards. Without it the file is created, reported private,
+    # and only refused later by `adopt_private` on the next call — far from
+    # the cause, and after a token the promise does not cover has already
+    # been written into it.
+    out = _grant_to_us_alone(path, sid)
+    principals, unreadable = _dacl_principals(path)
+    why = _mismatch_reason(principals, unreadable)
+    if why is None:
+        return
+
+    # Only when the ACE list was READ and disagreed. An icacls that would
+    # not run, or a listing this module could not parse, says nothing about
+    # whether explicit ACEs are the problem, and resetting on that would be
+    # widening the file on a guess.
+    if principals is not None:
+        rc, reset_out = _run("icacls", str(path), "/reset")
+        if rc != 0:
+            raise PrivateFileUnsupported(
+                f"{path} is not private ({why}) and the explicit ACEs could "
+                f"not be cleared; icacls /reset said {reset_out.strip()[:200]!r}")
+        out = _grant_to_us_alone(path, sid)
+        why = _mismatch_reason(*_dacl_principals(path))
+        if why is None:
+            return
+
+    # icacls's OWN words are carried too, not just the resulting DACL.
+    # `rc == 0` is not the same as "it did the work": icacls can print
+    # "Successfully processed 0 files; Failed processing 1 files" and
+    # still exit zero, and that line is the difference between "it
+    # declined" and "it succeeded and something undid it afterwards".
+    # Without this the two look identical from here.
+    raise PrivateFileUnsupported(
+        f"icacls reported success but {path} is still not private "
+        f"({why}); icacls said {out.strip()[:200]!r}")
+
+
+def _dacl_principals(path: Path) -> tuple[list[str] | None, str]:
+    """(principals, "") when the ACE list could be read, else (None, why not).
+
+    Split out of `_dacl_mismatch` so `_lock_down` can tell "the DACL names
+    somebody else" from "the DACL could not be read at all" without parsing
+    an English sentence back apart. It resets the ACEs on the first and must
+    not on the second: a listing this module cannot read says nothing about
+    what is in it, and clearing a file's ACEs on that basis would be
+    widening it on a guess.
+    """
+    rc, out = _run("icacls", str(path))
+    if rc != 0:
+        return None, f"icacls exited {rc}: {out.strip()[:200]!r}"
+    principals = _parse_aces(out, str(path))
+    if principals is None:
+        return None, f"could not parse the ACE list: {out.strip()[:200]!r}"
+    return principals, ""
 
 
 def _dacl_mismatch(path: Path) -> str | None:
@@ -218,22 +276,32 @@ def _dacl_mismatch(path: Path) -> str | None:
     about a file JARVIS created ten milliseconds earlier has been told
     nothing they can act on.
 
-    That is not hypothetical. The Windows CI leg refuses its own freshly
-    created token this way on every run, while the same code accepts it on
-    an ordinary desktop account, and the refusal as written cannot say which
-    of the three it hit. The reason returned here goes into the exception so
-    the next such report arrives with its own diagnosis attached.
+    That is not hypothetical, and this is the change that found the cause.
+    The Windows CI leg refused its own freshly created token on every run
+    while the same code accepted it on an ordinary desktop account, and the
+    refusal as first written could not say which of the three it had hit.
+    Naming the principals showed them to be EXPLICIT ACEs, which
+    `/inheritance:r` does not remove — see `_lock_down`, which now clears
+    them and tries again. The reason still goes into the exception, so the
+    next unfamiliar DACL arrives with its own diagnosis attached.
 
     The output is truncated because it reaches a log and an exception
     message, and an ACL listing on a strange file can be long.
     """
-    account, _sid = _current_identity()
-    rc, out = _run("icacls", str(path))
-    if rc != 0:
-        return f"icacls exited {rc}: {out.strip()[:200]!r}"
-    principals = _parse_aces(out, str(path))
+    return _mismatch_reason(*_dacl_principals(path))
+
+
+def _mismatch_reason(principals: list[str] | None, unreadable: str) -> str | None:
+    """The sentence for a DACL already read, or None when it is ours.
+
+    Separate from the reading so `_lock_down` can read the ACE list ONCE and
+    both branch on it and report it. It called `_dacl_mismatch` and then
+    `_dacl_principals`, which ran icacls twice over the same file and left
+    the second free to disagree with the first.
+    """
     if principals is None:
-        return f"could not parse the ACE list: {out.strip()[:200]!r}"
+        return unreadable
+    account, _sid = _current_identity()
     if principals != [account.lower()]:
         # Joined rather than repr'd. `repr` of a list of Windows principals
         # doubles every backslash, so `nt authority\system` reaches the user
