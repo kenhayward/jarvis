@@ -2275,15 +2275,43 @@ def _specs_fingerprint() -> str:
     up or down the list still changes the fingerprint. That is correct: the
     order is what the page shows. What is gone is the spurious change from a
     time moving while both the content and the position stayed put.
+
+    The WHOLE approval record is here, not just its state. The state alone
+    cannot tell "approved a minute ago" from "approved just now", and the
+    band at the top of a document renders the time — `specs.ts`,
+    `statusBand`: `approved ${fmtWhen(doc.approval.approved_at)}`. Approving
+    a document whose text is already approved rewrites `approved_at` and
+    leaves the state at "approved" and the digest untouched, so with only
+    the state here the fingerprint did not move and the open tab went on
+    showing the older time. Reachable by the plainest route there is:
+    `approve_document` has no once-only guard, so saying "approve it" twice
+    does it, and so does starting a second build from an unrevised spec,
+    because `start_build` records an approval of its own.
+
+    `approved_by` goes in with it although the band does not paint it. That
+    is a deliberate exception to "nothing that would not": the client
+    reconciles against the whole `/api/specs` payload, so a field it holds
+    and does not yet render is still a value that can go stale in its hands,
+    and an approval is a human act — there is no poll-rate cost to waking
+    for one.
+
+    `approved_at` is a clock, which is what the mtime above was thrown out
+    for being, and the two cases are opposites. The mtime was a PROXY for
+    whether the content had changed, and a coarse clock made it a bad one.
+    This time is the value on the page — nothing is inferred from it, so
+    there is no resolution it could be too coarse to carry.
     """
     parts: list[str] = []
     for project in _specs_projects():
         for doc in project["documents"]:
             progress = doc["progress"] or {}
+            approval = doc["approval"]
             parts.append("|".join((
                 project["name"], project["path"], doc["path"],
                 doc["digest"],
-                doc["approval"]["state"],
+                approval["state"],
+                repr(approval["approved_at"]),
+                approval["approved_by"],
                 f"{progress.get('done', '')}/{progress.get('total', '')}")))
     return "\n".join(parts)
 
