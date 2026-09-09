@@ -226,6 +226,60 @@ def test_a_file_with_inherited_aces_is_not_ours(monkeypatch):
     assert win_secrets._granted_only_to_us("C:\\data\\jarvis\\tool-token") is True
 
 
+def test_the_refusal_says_which_of_three_things_went_wrong(monkeypatch):
+    """A bare False collapsed three different failures into one silence, and
+    the refusal it produces is the whole of what a user sees at startup.
+
+    Told "not granted solely to this user" about a file JARVIS wrote itself
+    ten milliseconds earlier, they go looking for an intruder rather than at
+    the ACL that actually disagreed. The Windows CI leg does exactly this on
+    every run — refusing its own freshly created token, while the same code
+    accepts it on an ordinary desktop account — and the message as written
+    cannot say which of the three it hit.
+    """
+    path = "C:\\data\\jarvis\\tool-token"
+    monkeypatch.setattr(win_secrets, "_identity",
+                        ("desktop-abc\\ken", "S-1-5-21-1"))
+
+    # 1. icacls would not run at all.
+    monkeypatch.setattr(win_secrets, "_run", lambda *a: (5, "Access is denied."))
+    why = win_secrets._dacl_mismatch(path)
+    assert why and "icacls exited 5" in why and "Access is denied" in why
+
+    # 2. it ran, and said something this module cannot read.
+    monkeypatch.setattr(win_secrets, "_run", lambda *a: (0, "surprising\n"))
+    why = win_secrets._dacl_mismatch(path)
+    assert why and "could not parse" in why
+
+    # 3. the DACL is genuinely somebody else's — and BOTH sides are named,
+    #    which is the whole point: the reader can see what was found and
+    #    what was expected without running icacls themselves.
+    monkeypatch.setattr(win_secrets, "_run", lambda *a: (0, _ICACLS_INHERITED))
+    why = win_secrets._dacl_mismatch(path)
+    assert why and "nt authority\\system" in why and "desktop-abc\\ken" in why
+
+    # ...and nothing to say when it is ours.
+    monkeypatch.setattr(win_secrets, "_run", lambda *a: (0, _ICACLS_OURS))
+    assert win_secrets._dacl_mismatch(path) is None
+
+
+def test_the_adoption_refusal_carries_the_reason(monkeypatch, tmp_path):
+    """The reason has to survive as far as the exception, because that is
+    what reaches the user — `ensure_tool_token` runs before anything else."""
+    token = tmp_path / "tool-token"
+    token.write_text("planted", encoding="utf-8")
+    monkeypatch.setattr(win_secrets, "_identity",
+                        ("desktop-abc\\ken", "S-1-5-21-1"))
+    monkeypatch.setattr(win_secrets, "_run", lambda *a: (0, _ICACLS_INHERITED))
+
+    with pytest.raises(OSError) as caught:
+        win_secrets.adopt_private(token)
+
+    said = str(caught.value)
+    assert "not granted solely to this user" in said, "the sentence survives"
+    assert "nt authority\\system" in said, "and now says what it actually saw"
+
+
 def test_the_lockdown_breaks_inheritance_and_grants_by_sid(monkeypatch):
     """`/inheritance:r` REMOVES the inherited ACEs; `:e` would copy
     Administrators and SYSTEM in as explicit ones, which is the opposite of

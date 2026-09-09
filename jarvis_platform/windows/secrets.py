@@ -174,14 +174,50 @@ def _lock_down(path: Path) -> None:
             f"could not restrict {path} to this user: {out.strip()[:200]}")
 
 
-def _granted_only_to_us(path: Path) -> bool:
-    """Whether this file's DACL is exactly one ACE, granting this user."""
+def _dacl_mismatch(path: Path) -> str | None:
+    """None when the DACL is exactly one ACE granting this user, else WHY not.
+
+    A reason rather than a bool, because the bool collapsed three quite
+    different failures into one silent False: icacls refusing to run at all,
+    an ACE list this module could not parse, and a DACL that genuinely
+    belongs to somebody else. Only the third is the case the caller's
+    message describes, and a user reading "not granted solely to this user"
+    about a file JARVIS created ten milliseconds earlier has been told
+    nothing they can act on.
+
+    That is not hypothetical. The Windows CI leg refuses its own freshly
+    created token this way on every run, while the same code accepts it on
+    an ordinary desktop account, and the refusal as written cannot say which
+    of the three it hit. The reason returned here goes into the exception so
+    the next such report arrives with its own diagnosis attached.
+
+    The output is truncated because it reaches a log and an exception
+    message, and an ACL listing on a strange file can be long.
+    """
     account, _sid = _current_identity()
     rc, out = _run("icacls", str(path))
     if rc != 0:
-        return False
+        return f"icacls exited {rc}: {out.strip()[:200]!r}"
     principals = _parse_aces(out, str(path))
-    return principals == [account.lower()]
+    if principals is None:
+        return f"could not parse the ACE list: {out.strip()[:200]!r}"
+    if principals != [account.lower()]:
+        # Joined rather than repr'd. `repr` of a list of Windows principals
+        # doubles every backslash, so `nt authority\system` reaches the user
+        # as `nt authority\\system` inside quotes and brackets — noise in a
+        # sentence they are reading at startup to work out what is wrong.
+        # ASCII only, deliberately. This sentence is printed by a Windows
+        # console at startup, and a console on this platform is cp1252 far
+        # more often than not — an em-dash here is the same trap that took
+        # half this port to clear out of the file handling.
+        return (f"granted to {', '.join(principals)}, "
+                f"but this user is {account.lower()}")
+    return None
+
+
+def _granted_only_to_us(path: Path) -> bool:
+    """Whether this file's DACL is exactly one ACE, granting this user."""
+    return _dacl_mismatch(path) is None
 
 
 def create_private(path: Path) -> int | None:
@@ -219,11 +255,18 @@ def adopt_private(path: Path) -> int:
     if getattr(before, "st_reparse_tag", _NOT_A_REPARSE_POINT) != _NOT_A_REPARSE_POINT:
         raise OSError(f"{path} is a reparse point, not a plain file")
 
-    if not _granted_only_to_us(path):
+    why = _dacl_mismatch(path)
+    if why is not None:
         # Refused, never adopted and never re-permissioned: adopting it
         # would mean trusting a token somebody else chose and knows, and
         # deleting somebody else's file is not ours to do.
-        raise OSError(f"{path} is not granted solely to this user; "
+        #
+        # The reason is carried into the message. This refusal happens at
+        # startup, before anything else, so it is the whole of what the user
+        # gets — and "not granted solely to this user" about a file JARVIS
+        # wrote itself sends them looking for an intruder rather than at the
+        # ACL that actually disagreed.
+        raise OSError(f"{path} is not granted solely to this user ({why}); "
                       f"remove it if it is yours and JARVIS will make a new one")
 
     fd = os.open(str(path), os.O_RDWR | getattr(os, "O_BINARY", 0))
