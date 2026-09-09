@@ -69,6 +69,28 @@ def test_list_markers_are_not_sentence_ends():
     assert _split_all("1. Check the logs. 2. Restart it.") == ["1. Check the logs.", "2. Restart it."]
 
 
+async def until(predicate, timeout=5.0, what="the condition"):
+    """Wait for something to become true, rather than for a fixed time.
+
+    A bare `await asyncio.sleep(0.15)` states a guess about how long the
+    scheduler needs, and the guess is wrong on a machine slower or busier
+    than the one it was written on — the failure then arrives as an assertion
+    about some later value rather than as "the thing had not happened yet",
+    which is what it actually means. This waits for the state the test is
+    really about and fails saying so.
+
+    Module level rather than a Harness method because not every test here has
+    a Harness: the ack-watchdog tests below drive a `SpeechScheduler`
+    directly, and those were the ones still sleeping through their waits.
+    """
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if predicate():
+            return
+        await asyncio.sleep(0.01)
+    raise AssertionError(f"timed out waiting for {what}")
+
+
 class Harness:
     """A scheduler wired to a fake synthesizer and a recording transport."""
 
@@ -113,21 +135,8 @@ class Harness:
         await self.sched.played(utt_id, idx)
 
     async def until(self, predicate, timeout=5.0, what="the condition"):
-        """Wait for something to become true, rather than for a fixed time.
-
-        A bare `await asyncio.sleep(0.15)` states a guess about how long the
-        scheduler needs, and the guess is wrong on a machine slower or busier
-        than the one it was written on — the failure then arrives as an
-        assertion about `played` rather than as "nothing had been sent yet",
-        which is what it actually means. This waits for the state the test is
-        really about and fails saying so.
-        """
-        deadline = time.monotonic() + timeout
-        while time.monotonic() < deadline:
-            if predicate():
-                return
-            await asyncio.sleep(0.01)
-        raise AssertionError(f"timed out waiting for {what}")
+        """`until` for tests that have a Harness. See the module-level one."""
+        await until(predicate, timeout, what)
 
     async def ack_all(self, rounds=10):
         """Ack every audio message the client would have played, in order."""
@@ -850,10 +859,21 @@ async def test_a_lost_ack_does_not_mute_jarvis_forever():
     await s.start()
     try:
         u = await s.say("Nobody will ack this.")
-        await asyncio.sleep(0.1)
-        assert s.is_speaking and any(m["type"] == "audio" for m in msgs)
-        await asyncio.sleep(0.5)                     # > ack_timeout, no ack ever arrives
-        assert u.cancelled and not s.is_speaking
+        # Both waits below were `asyncio.sleep`, and both were guesses about
+        # how long a step takes rather than statements about what must happen.
+        # The first — 0.1s for synthesis and a send — is the one that lost
+        # under full-suite load: `is_speaking` was simply not true yet, and
+        # the failure read as though the watchdog had misfired.
+        await until(lambda: any(m["type"] == "audio" for m in msgs),
+                    what="the first chunk to be sent")
+        assert s.is_speaking
+        # The second is the watchdog itself, which is the thing under test:
+        # no ack ever arrives, so it must abandon the utterance. Given a
+        # generous ceiling rather than a fixed 0.5s, so a slow machine waits
+        # longer instead of failing.
+        await until(lambda: u.cancelled, timeout=5.0,
+                    what="the ack watchdog to abandon the utterance")
+        assert not s.is_speaking
         later = await s.say("Second line.")
         await asyncio.sleep(0.1)
         await s.played(later.id, 0)
