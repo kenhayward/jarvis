@@ -46,6 +46,20 @@ def brain_home() -> Path:
     return data_dir() / "jarvis"
 
 
+def brain_prompt_dir() -> Path:
+    """Where each generation's launch system prompt is written for the child
+    to read (`brain.Brain._launch_prompt_file`).
+
+    Beside `brain_home()`, deliberately not inside it. That directory is the
+    brain's cwd and holds its CLAUDE.md — a scaffolding file dropped in there
+    is something it can list, read and be confused by, and the prompt names
+    the user and carries the previous generation's handover.
+    """
+    path = data_dir() / "brain-prompts"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
 def persona_template_path() -> Path:
     """The CLAUDE.md this release ships."""
     return _TEMPLATE_DIR / _PERSONA_NAME

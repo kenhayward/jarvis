@@ -75,7 +75,8 @@ async def test_the_handover_reaches_the_new_generation(tmp_path):
 @pytest.mark.asyncio
 async def test_the_handover_is_passed_to_the_new_process(tmp_path, monkeypatch):
     """launch_prompt() is only useful if the spawn actually carries it: the
-    handover reaches the new generation through --append-system-prompt."""
+    handover reaches the new generation through the file named by
+    --append-system-prompt-file."""
     seen = []
     real = asyncio.create_subprocess_exec
 
@@ -91,7 +92,9 @@ async def test_the_handover_is_passed_to_the_new_process(tmp_path, monkeypatch):
 
         assert await b.rotate(handover="we were fixing chitauri") is True
 
-        prompt = seen[-1][seen[-1].index("--append-system-prompt") + 1]
+        argv = seen[-1]
+        prompt = Path(argv[argv.index("--append-system-prompt-file") + 1]) \
+            .read_text(encoding="utf-8")
         assert "chitauri" in prompt and "brain generation 2" in prompt
     finally:
         await b.stop()

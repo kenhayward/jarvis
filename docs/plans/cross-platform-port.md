@@ -12,7 +12,7 @@ live working reference while the work spans two machines.
 | 0 | Spikes — measure, decide, no production code | Mac + Windows | partly done, the Windows half outstanding |
 | 1 | Portability hygiene + a failing Windows CI job | Mac | **merged** (PR #3) |
 | 2 | The platform layer, macOS only | Mac | **merged** (PR #4) |
-| 3 | `jarvis_platform/windows/` — first Windows build | Windows | **in progress** |
+| 3 | `jarvis_platform/windows/` — first Windows build | Windows | **code complete** 2026-09-09; CI gate deferred to after phase 4 |
 | 4 | The speech sidecar | Mac, verified on Windows | not started |
 | 5 | Electron shell, macOS first | Mac | not started |
 | 6 | Windows packaging and release | Windows | not started |
@@ -67,26 +67,53 @@ signal for acoustic echo cancellation.
 
 ## Phase 3 — what is left
 
-**One item.** The rest of this section is the record of how the others were
-answered; `docs/plans/windows-handoff.md` is the live document.
+**Nothing on the Windows machine.** Both remaining items were answered by
+measurement on 2026-09-09, and the one thing still outstanding —
+`continue-on-error` on the Windows CI job — is **deferred on purpose** until
+after phase 4, when there is a complete stable Windows build. The rest of this
+section is the record of how the items were answered;
+`docs/plans/windows-handoff.md` is the live document.
 
-- **Spawning `claude.cmd`. STILL OPEN, and untested rather than
-  known-broken.** `create_subprocess_exec` cannot run a `.cmd` or `.bat`
-  directly — those need the command processor. `claude_env.split_command`
-  fixed the *splitting* half in phase 1; the *spawning* half was left to the
-  two call sites (`brain.py`, `run_executor.py`) and never done.
+Both of the last two items were "verify a guess" tasks, and **both guesses
+were wrong in the same direction**: a belief about Windows that had never been
+measured, carried in a docstring, and relied on by code and by a test that
+passed without testing it. That is the phase 3 lesson, more than any
+individual fix.
 
-  It has not bitten on the Windows box because Claude Code installed there
-  as `claude.exe`, from the native installer. But this repository's own setup
-  instructions say `npm install -g @anthropic-ai/claude-code`, and on Windows
-  npm writes a **`claude.cmd`** shim — so the documented path leads straight
-  into the unhandled case. Every test fakes `claude` at the subprocess seam,
-  so nothing in the suite would catch it either.
+Answered:
 
-  Verify it by installing the npm shim and spawning it, not by reasoning
-  about it.
+- ~~**The terminal launcher.**~~ **ANSWERED AND FIXED 2026-09-09.**
+  `_terminal_argv`'s `wt` branch was correct as written — verified opening at
+  a directory with a space in it, across a drive change. Its cmd.exe fallback
+  had never been run and did not work: the composed `cd /d "<dir>" && <cmd>`
+  went into one argv element, Python escaped the quotes as `\"`, and cmd.exe
+  reads that literally. Beneath it, `cmd.exe` through `_spawn`'s pipes was
+  headless, so there was no window either. The directory now travels as the
+  spawn's `cwd` on both branches, which retires the `cd /d` question rather
+  than answering it.
 
-Answered, and each in the same commit as its implementation:
+- ~~**Spawning `claude.cmd`.**~~ **ANSWERED AND FIXED 2026-09-09, and the
+  premise was wrong.** `create_subprocess_exec` **can** run a `.cmd` —
+  measured, rc 0 — because Windows reaches a batch file through the command
+  processor implicitly. No spawn wrapper was ever needed.
+
+  The real defect is that the implicit route re-parses the ARGUMENTS: a
+  newline truncates one and `%NAME%` is expanded. `run_executor.py` was never
+  exposed (simple argv, prompt over stdin — a real run through the npm shim
+  succeeded untouched). `brain.py` was: its multi-line `--append-system-prompt`
+  lost **60% of the system prompt**, silently, on any npm install.
+
+  The predicted cure — `cmd.exe /c` at the call sites — was measured and
+  damages the argument identically. The actual cure is to keep multi-line text
+  out of argv entirely: the prompt goes to a file
+  (`--append-system-prompt-file`, accepted as far back as the 2.1.224 floor),
+  and `preflight`'s `claude_shim` check WARNs when `claude` is a batch shim.
+
+  The lesson generalises past this item: **the task had been scoped for months
+  from a belief nobody had measured**, and measuring changed both the
+  diagnosis and the fix. This plan's own instruction — "verify it by
+  installing the npm shim and spawning it, not by reasoning about it" — is
+  what caught it.
 
 - ~~**Session steering.**~~ **BUILT.** `socket.AF_UNIX` is not exposed by
   CPython on Windows, and Claude Code there publishes a NAMED PIPE in the

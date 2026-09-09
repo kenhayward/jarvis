@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Awaitable, Callable, Optional
 
 import claude_env
+import data_paths
 import jarvis_platform
 import usage_store
 
@@ -762,6 +763,48 @@ class Brain:
                      + ", ".join(sorted(set(projects))) + ".")
         return base
 
+    def _launch_prompt_file(self) -> Path:
+        """Write this generation's system prompt and return its path.
+
+        The prompt does NOT travel in argv, and the reason is Windows. An npm
+        install of Claude Code — the one this repository's README tells users
+        to do — puts a `claude.cmd` shim on PATH, and Windows reaches a `.cmd`
+        through the command processor, so cmd.exe re-parses the argument list
+        on the way in. Measured on a real box, 2026-09-09: a NEWLINE truncates
+        the argument and everything after it is dropped, and `%NAME%` is
+        expanded. `launch_prompt()` is multi-line whenever there is a handover
+        to carry, so 60% of the system prompt went missing, silently.
+
+        Quoting cannot fix it — `cmd.exe /c` was measured and damages the
+        argument identically, because that is already what happens. Nothing
+        multi-line may be in a command line at all, so it goes to a file.
+        `--append-system-prompt-file` is accepted as far back as 2.1.224, the
+        floor CLAUDE.md sets, and an unknown flag is refused loudly rather
+        than ignored, so a CLI without it cannot fail quietly.
+
+        Written HERE rather than in `_spawn_locked` so the file and the argv
+        that names it are produced together: a caller cannot end up holding a
+        path to a prompt nobody wrote.
+
+        `newline=""` because text mode on Windows would translate every \\n to
+        \\r\\n — the same class of defect `_write_atomically` is pinned to LF
+        for, and the file must hold what `launch_prompt()` built.
+        """
+        directory = data_paths.brain_prompt_dir()
+        path = directory / f"launch-{self.generation}.txt"
+        path.write_text(self.launch_prompt(), encoding="utf-8", newline="")
+        # A rotation holds the predecessor alive while the successor spawns,
+        # so its file is still in use; anything older than that is litter and
+        # would otherwise accumulate for the life of the process.
+        for stale in directory.glob("launch-*.txt"):
+            if stale.name not in (path.name,
+                                  f"launch-{self.generation - 1}.txt"):
+                try:
+                    stale.unlink()
+                except OSError:      # a file we cannot remove is not fatal
+                    log.debug("could not sweep %s", stale, exc_info=True)
+        return path
+
     def command(self) -> list[str]:
         c = self.config
         cmd = claude_env.split_command(self._claude) + [
@@ -772,7 +815,8 @@ class Brain:
             "--tools", ",".join(granted_tools(c.connections)),
             "--settings", json.dumps({"crossSessionInbound": "accept"}),
             "--dangerously-skip-permissions",
-            "--append-system-prompt", self.launch_prompt(),
+            # A path, never the prose. See `_launch_prompt_file`.
+            "--append-system-prompt-file", str(self._launch_prompt_file()),
         ]
         if c.mcp_config:
             cmd += ["--mcp-config", str(c.mcp_config)]
