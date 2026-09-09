@@ -213,7 +213,30 @@ def test_a_symlink_in_the_token_path_is_refused_not_followed(
         server.data_paths.ensure_tool_token()
 
     assert planted.read_text(encoding="utf-8") == "attacker-chosen-token"
-    assert planted.stat().st_mode & 0o777 == 0o644, "chmod followed the link"
+
+    # The mode half is POSIX-only, and the reason is not that it is awkward
+    # on Windows but that it cannot MEAN anything there. `chmod` has one bit
+    # on this platform -- read-only -- so `chmod(0o644)` above already left
+    # the file at 0o666, and had the link been followed with 0o600 it would
+    # read 0o666 too. The assertion could not tell the two apart, so running
+    # it proves nothing and only fails: measured on the CI runner,
+    # `assert (33206 & 511) == 420` under the message "chmod followed the
+    # link", which is not what had happened.
+    #
+    # Windows is not left untested here. Its half of "refused, not followed"
+    # is the pair of lstat guards in `jarvis_platform.windows.secrets`
+    # (`adopt_private` refuses a path that is not a regular file, and any
+    # path carrying an `st_reparse_tag`), and one of those is what raises
+    # the OSError asserted above -- on the real symlink this test plants, on
+    # a runner that is allowed to create one. Which of the two fires is not
+    # asserted because it could not be checked: creating a symlink needs a
+    # privilege this developer box does not hold, which is also why
+    # `needs_symlinks` skips the whole test here and why the CI runner,
+    # being an admin, is the only place it has ever run.
+    #
+    # What is skipped below is one assertion, not the property.
+    if os.name != "nt":
+        assert planted.stat().st_mode & 0o777 == 0o644, "chmod followed the link"
 
 
 class _FakeBrain:
