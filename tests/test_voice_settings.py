@@ -248,6 +248,44 @@ async def test_the_status_endpoint_shows_the_fallback(client, fallen_back):
     assert c.get("/api/settings/status").json()["tts_fallback_from"] == "piper"
 
 
+def test_the_screen_switch_round_trips_through_the_settings_page(client):
+    """The consent model is only real if the page can turn it OFF as easily
+    as on, so the endpoint behind that checkbox is worth pinning.
+
+    `screen_capture_gated` is a separate fact from `screen_capture`, and the
+    page needs both: macOS gates capture through System Settings, so a toggle
+    drawn there would be a switch JARVIS does not own and cannot honour.
+    """
+    import jarvis_platform as jp
+    c, server = client
+    body = c.get("/api/settings/status").json()
+
+    gated = (jp.can(jp.CAP_SCREEN_CAPTURE)
+             and jp.current().screen.CAPTURE_GATE.off_by_default)
+    assert body["screen_capture_gated"] is gated
+    assert body["screen_capture"] is False, "off is the shipped state"
+
+    if not gated:
+        return
+
+    assert c.post("/api/settings/keys",
+                  json={"key_name": "JARVIS_SCREEN_CAPTURE",
+                        "key_value": "true"}).status_code == 200
+    assert c.get("/api/settings/status").json()["screen_capture"] is True
+
+    # And back off again, which is the half that matters most.
+    assert c.post("/api/settings/keys",
+                  json={"key_name": "JARVIS_SCREEN_CAPTURE",
+                        "key_value": "false"}).status_code == 200
+    assert c.get("/api/settings/status").json()["screen_capture"] is False
+
+    # A spelling the switch itself would read as NO is refused rather than
+    # stored, so the page can never show an eye open that is shut.
+    assert c.post("/api/settings/keys",
+                  json={"key_name": "JARVIS_SCREEN_CAPTURE",
+                        "key_value": "on"}).status_code == 400
+
+
 def test_no_startup_announcement_can_reach_the_voice(client):
     """The rail the test above needs, pinned where it was needed.
 

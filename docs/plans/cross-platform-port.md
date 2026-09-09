@@ -67,22 +67,46 @@ signal for acoustic echo cancellation.
 
 ## Phase 3 — what is left
 
-Written and unverified (see the handoff): the tool token, the launcher,
-notifications. Blocked on a real machine rather than on code:
+**One item.** The rest of this section is the record of how the others were
+answered; `docs/plans/windows-handoff.md` is the live document.
 
-- **Session steering.** `socket.AF_UNIX` is not exposed by CPython on
-  Windows. Claude Code there most likely publishes a named pipe, but the
-  roster's `socket_path` has to be *read* before anything is written.
-- **`answer_dialog`.** Needs `Dialogs.terminal_of` to return something as
-  exact as a tty. If it cannot, this is a macOS capability permanently —
-  a defensible answer for a tool that sends synthetic keystrokes.
-- **Screen capture and the window list.** Needs a capture route decided and,
-  more importantly, the consent model: macOS gates these behind TCC, Windows
-  asks nobody, so shipping them unchanged removes a safety rail rather than
-  porting it.
-- **Spawning `claude.cmd`.** `create_subprocess_exec` cannot run a `.cmd`
-  directly. `claude_env.split_command` fixed the *splitting* half in phase 1;
-  the *spawning* half is still open.
+- **Spawning `claude.cmd`. STILL OPEN, and untested rather than
+  known-broken.** `create_subprocess_exec` cannot run a `.cmd` or `.bat`
+  directly — those need the command processor. `claude_env.split_command`
+  fixed the *splitting* half in phase 1; the *spawning* half was left to the
+  two call sites (`brain.py`, `run_executor.py`) and never done.
+
+  It has not bitten on the Windows box because Claude Code installed there
+  as `claude.exe`, from the native installer. But this repository's own setup
+  instructions say `npm install -g @anthropic-ai/claude-code`, and on Windows
+  npm writes a **`claude.cmd`** shim — so the documented path leads straight
+  into the unhandled case. Every test fakes `claude` at the subprocess seam,
+  so nothing in the suite would catch it either.
+
+  Verify it by installing the npm shim and spawning it, not by reasoning
+  about it.
+
+Answered, and each in the same commit as its implementation:
+
+- ~~**Session steering.**~~ **BUILT.** `socket.AF_UNIX` is not exposed by
+  CPython on Windows, and Claude Code there publishes a NAMED PIPE in the
+  same `messagingSocketPath` field. `session_steer` writes its one JSON line
+  to it with the ordinary file API. Verified against a live session.
+- ~~**`answer_dialog`.**~~ **WRITTEN OFF, permanently**, which is the answer
+  this plan already allowed for. `Dialogs.terminal_of` cannot return anything
+  as exact as a tty: measured, thirteen `claude.exe` processes against ONE
+  owning pid across four window handles, because a window's owner is the
+  terminal HOST and not the session inside it. Aiming a synthetic keystroke
+  by focus instead is the one thing `base.Dialogs` forbids outright.
+- ~~**Screen capture and the window list.**~~ **BOTH BUILT**, and split
+  apart on the way, because only one of them ever had a rail to lose.
+  Enumerating windows needs no permission on Windows. The pixels waited for
+  a consent model and got one: `JARVIS_SCREEN_CAPTURE`, shipped OFF, read at
+  call time — the one property of TCC worth reproducing, which is a switch
+  the user turns on and can turn off again.
+- ~~**The tool token, the launcher, notifications.**~~ Written from
+  documentation in phase 3 and since **verified on a real box**, with one
+  correction each. See the handoff's guess table.
 
 ## What to cut if it slips, in order
 

@@ -125,12 +125,15 @@ live in one small, well-isolated file — see *Make it yours* below.
   those checkboxes, not by guessing.
 - **Watches every Claude Code session on the machine** — not just his own. Ask
   "which of my sessions are waiting on me?" and he checks live. He can post a
-  message into one, and answer a permission prompt for one running in
-  Terminal.app by pressing a single key.
+  message into one on either platform. Answering a permission prompt for one
+  by pressing a single key is macOS only — Windows gives no way to aim a
+  keystroke at one specific session, so JARVIS tells you and lets you press
+  it yourself rather than guessing at the window.
 - **Interrupts you when it matters.** A session that needs a human gets said
   out loud immediately; a session that merely finished gets batched into one
   sentence at the next pause. If nobody has the browser tab open, it becomes a
-  macOS notification instead.
+  desktop notification instead — Notification Centre on macOS, a toast on
+  Windows.
 - **Remembers.** Long-term memory is a folder of plain Markdown files, one
   fact per file, with an index the brain always sees. You can read and edit it
   in any text editor.
@@ -165,8 +168,17 @@ stuck is the CLI's own words, not a guess. Fictional sample data.*
 
 ## Requirements
 
-- **macOS.** Terminal control, window listing, screenshots and notifications
-  all go through AppleScript. There is no Linux or Windows path today.
+- **macOS, or Windows.** macOS is the platform JARVIS was built on and the
+  one CI gates on; there its system integration goes through AppleScript.
+  Windows is supported by a second implementation behind the same interface
+  (`jarvis_platform/`) and runs the same test suite green on a real machine.
+  It withdraws exactly one tool — `answer_dialog`, which sends a keystroke
+  into a specific terminal window, and which Windows cannot aim safely.
+  **Two caveats there, both real:** JARVIS has no default voice on Windows
+  (`say` is macOS's, so you need `piper` or a Fish Audio key — see below),
+  and letting him see your screen is off until you switch it on, because
+  Windows has no permission prompt of its own to stand in the way. There is
+  no Linux path.
 - **Google Chrome.** Not a preference — a constraint. The microphone uses the
   Web Speech API (`SpeechRecognition` / `webkitSpeechRecognition`, see
   `frontend/src/voice.ts`), which Firefox has never implemented. There is no
@@ -175,9 +187,13 @@ stuck is the CLI's own words, not a guess. Fictional sample data.*
   @anthropic-ai/claude-code` (2.1.224 or newer), then run `claude` once and
   log in. This is what JARVIS runs on.
 - **Python 3.11+** and **Node.js 18+**.
-- **Nothing else.** The voice is local (macOS `say`). `piper` is an optional
-  install for a better local voice; a Fish Audio key is optional too, and only
-  read with `JARVIS_TTS_BACKEND=fish`.
+- **Nothing else on macOS.** The voice is local (`say`). `piper` is an
+  optional install for a better local voice; a Fish Audio key is optional
+  too, and only read with `JARVIS_TTS_BACKEND=fish`.
+- **On Windows, a voice is the one thing you must choose.** `say` is macOS's
+  own binary and there is no equivalent to fall back to, so install `piper`
+  (`pip install -r requirements-piper.txt`, then download a voice) or set a
+  Fish Audio key. Everything else is the same.
 
 ## Setup
 
@@ -349,8 +365,8 @@ invariants hold throughout it:
 | Frontend | Vite + TypeScript + Three.js (voice UI), vanilla TS (dashboard) |
 | Communication | WebSocket — JSON messages, base64 audio (WAV locally, MP3 from Fish) |
 | Brain | One long-lived `claude -p` process, Sonnet by default, on your subscription |
-| Voice | macOS `say` by default, piper or Fish Audio on request; one call per sentence |
-| System | AppleScript — Terminal, Chrome, notifications, screenshots |
+| Voice | macOS `say` by default, piper or Fish Audio on request (and required on Windows); one call per sentence |
+| System | One interface, two implementations (`jarvis_platform/`) — AppleScript on macOS, ctypes and PowerShell on Windows |
 | Storage | SQLite for runs and usage; plain Markdown for memory |
 
 ### Key files
@@ -460,8 +476,9 @@ it and bend it to what you do. The seams are deliberately obvious:
 - **The orb** is `frontend/src/orb.ts`, self-contained Three.js.
 
 Contributions are welcome, and the most useful ones are the ones this cannot
-do yet: non-macOS system integration, alternative TTS engines, and a mobile
-client. Please open an issue before a large PR.
+do yet: a Linux implementation of `jarvis_platform` (macOS and Windows are
+both there, and the interface is the whole point), alternative TTS engines,
+and a mobile client. Please open an issue before a large PR.
 
 ## Development
 

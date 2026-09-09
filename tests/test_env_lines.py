@@ -24,6 +24,7 @@ of never having to trust that somebody remembered `\\x85`.
 """
 
 import importlib
+import os
 import sys
 from pathlib import Path
 
@@ -222,3 +223,36 @@ def test_a_value_the_reader_would_change_is_refused(env):
     for value in (" Tony ", "'Tony'", '"Tony"', "Tony\t"):
         with pytest.raises(ValueError):
             server._write_env_key("USER_NAME", value)
+
+
+def test_the_screen_capture_switch_is_a_yes_or_a_no_and_nothing_else(env):
+    """This one decides whether JARVIS may photograph the user's desk, so it
+    does not get to be any string that happens to fit in a line.
+
+    The specific trap is "off". `screen.permission_granted` counts only
+    1/true/yes/on as yes, so an unconstrained field would happily store "off"
+    — and also "no", and "disabled" — every one of which reads as a NO. That
+    is harmless. The mirror image is not: a user who typed something they
+    believed meant yes and was quietly told nothing would think the switch
+    was on. Two words, so `.env` reads as a decision.
+    """
+    _c, server = env
+    for yes_or_no in ("true", "false"):
+        server._write_env_key("JARVIS_SCREEN_CAPTURE", yes_or_no)
+        assert server._read_env()[1]["JARVIS_SCREEN_CAPTURE"] == yes_or_no
+
+    for wrong in ("on", "off", "1", "0", "yes", "no", "TRUE", "", "maybe"):
+        with pytest.raises(ValueError):
+            server._write_env_key("JARVIS_SCREEN_CAPTURE", wrong)
+
+
+def test_the_screen_capture_switch_reaches_os_environ_not_only_the_file(env):
+    """`screen.permission_granted` reads `os.environ` at CALL time, so this
+    is what makes a grant — and a revocation — take effect on the next
+    capture rather than on the next restart. The consent model is much
+    weaker if turning it off needs the server bounced."""
+    _c, server = env
+    server._write_env_key("JARVIS_SCREEN_CAPTURE", "true")
+    assert os.environ["JARVIS_SCREEN_CAPTURE"] == "true"
+    server._write_env_key("JARVIS_SCREEN_CAPTURE", "false")
+    assert os.environ["JARVIS_SCREEN_CAPTURE"] == "false"

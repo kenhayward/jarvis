@@ -7,29 +7,100 @@ change.
 Read [`cross-platform-port.md`](cross-platform-port.md) for why the phases
 are ordered the way they are. This document is only about doing phase 3.
 
+## Picking this up on another machine
+
+Read this section, then "What is left" below. Everything else is the record
+of how the current state was reached, and is worth reading only when you are
+about to touch the thing it describes.
+
+**Phase 3 is one item from done.** Windows withdraws exactly one tool
+(`answer_dialog`, permanently and by decision). 33 of the 34 tools work, the
+suite is green on a real Windows box, and the CI leg is down from 65 failures
+to nothing known.
+
+**The one open item is spawning `claude.cmd`** — see "What is left". It is
+untested rather than known-broken, and it will not reproduce on a machine
+where Claude Code was installed by the native installer.
+
 ## State right now
 
 - Phase 1 (portability defects) — merged, PR #3.
 - Phase 2 (the platform layer) — merged, PR #4.
 - Phase 3 — merged, PR #5. The tool token, the launcher and notifications
-  were written from documentation.
+  were written from documentation; all three have since been corrected
+  against a real machine (see the guess table).
 - **The Windows box has been live since 2026-09-08** and the suite runs on
-  it. **It is GREEN as of 2026-09-09** (2470 passed, 83 skipped), and
-  `steer_session` is built and verified against a live session (PR #15).
+  it. **It is GREEN as of 2026-09-09** (2488 passed, 78 skipped).
+- `steer_session` built and verified against a live session (PR #15); the
+  window list built (PR #16); screen capture built and gated behind
+  `JARVIS_SCREEN_CAPTURE`, default off.
 - **The Windows CI leg is a separate question from the Windows box**, and
   conflating the two was a real mistake made here: "Windows is green" was
   reported when only this machine was, while the runner sat at 65 failures.
   Its job is `continue-on-error: ${{ matrix.os == 'windows-latest' }}`, so
   **the whole run shows a green tick with the Windows leg red inside it** —
   `gh run view <id>` and look at the job, never just the run's conclusion.
-  Those 65 were 64 DACL (see below) and one `KeyError: 'HOME'`; both are
-  fixed, and the leg should be looked at once more before anyone proposes
-  dropping `continue-on-error`.
+  Those 65 were 64 DACL, one `KeyError: 'HOME'`, one Windows-meaningless
+  `chmod` assertion and one flake; all fixed. **Nothing is known to fail
+  there now**, and removing `continue-on-error` is the natural next step —
+  as its own change, after a run or two comes back clean. Do not remove it
+  on a prediction: a gate that goes red intermittently is worse than one
+  that is honestly amber.
 - macOS suite: 2523 passed, 2 failed, from before any of this. **Not re-run
   here — it cannot be, and it remains the gate.** Note two of the PRs below
   changed a shared module's public surface (`session_watch.inbox_exists`,
   `is_pipe`) and one added a `Secrets` protocol method (`restrict`), so the
   macOS leg is doing real work on those and not just confirming a no-op.
+
+## What is left
+
+Three things, one of them code.
+
+### 1. Spawning `claude.cmd` — the last phase 3 item
+
+`asyncio.create_subprocess_exec` cannot run a `.cmd` or `.bat` directly;
+those need the command processor. `claude_env.split_command` fixed the
+SPLITTING half in phase 1 and says so in its own docstring — the spawning
+half was left to the call sites and never done. Two of them:
+`brain.py` and `run_executor.py`.
+
+**It has not bitten here, and that is the trap.** Claude Code on this box is
+`claude.exe`, from the native installer, which spawns fine. But `CLAUDE.md`
+tells users to `npm install -g @anthropic-ai/claude-code`, and on Windows npm
+writes a **`claude.cmd`** shim — so the documented install path leads
+straight into the unhandled case. Every test fakes `claude` at the subprocess
+seam, so the suite cannot catch it either.
+
+Verify it by installing the npm shim and spawning a real run, not by reading
+the code. If it does need fixing, the shape is probably
+`create_subprocess_exec("cmd.exe", "/c", <path>, *args)` at both sites, and
+the argument quoting is then cmd.exe's rules rather than
+CommandLineToArgvW's — which is exactly the class of bug
+`windows/launcher.py` exists to keep in one place.
+
+### 2. The last unverified guess: `wt` / `cmd.exe` argv
+
+The guess table below has one row still at "not yet run" —
+`windows/launcher.py::_terminal_argv`. There is partial evidence and it is
+worth knowing: a broken test really did drive this path for four days,
+producing a visible Windows error dialog per suite run
+("Could not access starting directory ..."). So the argv reaches a real
+terminal and fails loudly on a bad directory. What has never been seen is a
+SUCCESSFUL open. Point `open_in_terminal` at a real project and look.
+
+### 3. Drop `continue-on-error` from the Windows CI job
+
+Nothing is known to fail there. See the state section for why this wants a
+clean run or two first rather than being done on a prediction.
+
+Not phase 3, and the actual next phase: **server-side speech recognition**
+(phase 4). `frontend/src/voice.ts` uses Chrome's `webkitSpeechRecognition`,
+which is a Google web service reached with keys only Google's builds carry —
+so wrapping the page in Electron deletes the microphone. That is the blocker
+phase 4 exists to resolve, and it improves macOS at the same time by retiring
+the echo heuristics in `speech.py`.
+
+## How the port got here
 
 ### The Windows number, and how it moved
 
@@ -244,7 +315,9 @@ The guesses are isolated so a real box corrects each in one place:
 | what `icacls <path>` prints | `windows/secrets.py::_parse_aces` | `_ICACLS_OURS`, `_ICACLS_INHERITED` | **confirmed** 2026-09-08, one correction |
 | what `whoami /user /fo csv /nh` prints | `windows/secrets.py::_parse_whoami` | `_WHOAMI_SAMPLE` | **confirmed** 2026-09-08, exact |
 | the toast AUMID | `windows/notifications.py::_AUMID` | nothing — it fails silently, see below | **confirmed** 2026-09-08 — real toasts seen on screen |
-| `wt` / `cmd.exe` argv | `windows/launcher.py::_terminal_argv` | `tests/test_windows_platform.py` | not yet run |
+| `wt` / `cmd.exe` argv | `windows/launcher.py::_terminal_argv` | `tests/test_windows_platform.py` | **partly** — seen to reach a real terminal and fail loudly on a bad directory; a successful open never observed |
+| PowerShell + System.Drawing capture | `windows/screen.py::_CAPTURE_PS1` | `tests/test_windows_screen.py` | **confirmed** 2026-09-09, one correction (DPI) |
+| `EnumWindows` / `QueryFullProcessImageNameW` | `windows/screen.py::_enumerate` | `tests/test_windows_screen.py` | **confirmed** — reads the real desktop |
 
 All the samples are in `tests/test_windows_platform.py`. Replace one with
 real output and the failures will name everything downstream of it.
@@ -444,7 +517,7 @@ gets built at all.
   So `CAP_DIALOG_KEY` stays absent, permanently, and that is the answer the
   plan already called defensible rather than a gap to close.
 
-## The withdrawn tools: one built, two decisions, one written off
+## The withdrawn tools: three built, one written off
 
 All four spikes are answered, so this is a ranking rather than an open
 question. Agreed 2026-09-09.
@@ -476,8 +549,42 @@ question. Agreed 2026-09-09.
    get it. Anyone repeating this should pick their own session for the same
    reason, and can find it by matching `sessionId`.
 
-2. **`what_is_on_screen` — BUILT, PR #16. `look_at_screen` — the consent
-   model is DECIDED, the capture is not built.**
+2. ~~**`what_is_on_screen` / `look_at_screen`**~~ **BOTH BUILT. PR #16 for
+   the titles, and the pixels once the consent model existed to sit behind.**
+
+   `JARVIS_SCREEN_CAPTURE`, default OFF, read at call time. Settable from
+   Settings and constrained to `true`/`false`, because a consent model is
+   only real if revoking is as easy as granting. CAP_SCREEN_CAPTURE is
+   declared even so — a capability says what is BUILT, a switch says what is
+   allowed today, and macOS declares this one while TCC may refuse every
+   call.
+
+   **The capture is PowerShell + System.Drawing**, one `-EncodedCommand`
+   spawn (0.71s warm, 2.30s when PowerShell prepares its modules), with the
+   three inputs passed in the ENVIRONMENT so nothing is ever interpolated
+   into the script. No new dependency.
+
+   **The DPI trap, and it is the thing to remember from this whole item.**
+   Without `SetProcessDPIAware` a process is lied to about the display:
+   measured here, 1536x960 reported for a screen that is physically
+   3840x2400 (250% scaling). `CopyFromScreen` then copies the top-left
+   1536x960 PHYSICAL pixels — **16% of the desktop by area** — and returns a
+   real, plausible, correctly-shaped screenshot of the wrong thing, which
+   JARVIS would describe as "your screen".
+
+   It cannot be caught downstream. A test asserting on the result's size and
+   aspect ratio was written, and it PASSED with the DPI line deleted: both a
+   whole 3840x2400 desktop and a 1536x960 corner shrink to exactly 1280x800
+   under the cap, and a crop of a 16:10 screen is still 16:10. So the script
+   reports the bounds it used and `_refuse_a_partial_desktop` checks them
+   against the physical size read a different way (`GetDeviceCaps`, which
+   does not need the asking process to be DPI-aware). Deleting the line now
+   raises instead of lying.
+
+   Everything below is the record of how the decision was reached.
+
+   **`what_is_on_screen` — BUILT, PR #16. `look_at_screen` — the consent
+   model, decided before the capture was written.**
 
    The two tiers were split, which is the point of that PR. macOS gates
    BOTH behind one TCC permission, so they have always arrived together and
@@ -519,6 +626,10 @@ question. Agreed 2026-09-09.
    "off" — every caller already handles it.
 3. **`answer_dialog` — write it off.** See the spike above.
 
+**All four are answered in code now**: two built outright, one built and
+gated behind a switch, one written off permanently. Windows withdraws
+exactly one tool.
+
 What the remaining gap costs, stated plainly, because it is now much smaller
 than it was. Until PR #15 the honest summary was "on Windows JARVIS observes
 but cannot intervene": the roster, the "needs a human hand" detection and the
@@ -529,7 +640,9 @@ send it an instruction. What is left is the narrow case that steering cannot
 reach on ANY platform — a session wedged behind a permission prompt, which is
 what `answer_dialog` exists for and which stays a macOS capability. So the
 sentence is now: on Windows JARVIS can talk to a session but cannot press a
-key in it. 31 of the 34 tools work.
+key in it. That was written when 31 of the 34 tools worked; the screen pair
+has since been built, so it is 33, and `answer_dialog` is the only one
+Windows withdraws.
 
 One thing NOT to assume about that, checked rather than remembered.
 `_perform_dialog`'s "another application is hosting it, so that one needs
@@ -545,13 +658,19 @@ notice there is currently no code path that would say it.
 
 So the two machines do not block each other:
 
-- The Windows preflight check set (`preflight.py` currently has no Windows
-  branch; Accessibility and Screen Recording are already skipped by
-  capability, but the remedies are macOS-worded).
-- The `.cmd` spawn wrapper for `claude.cmd` — the shape is decidable, the
-  behaviour is not.
+- ~~The Windows preflight check set~~ — **DONE for the screen half.** The
+  remedy and the FAIL-vs-WARN status now come from `screen.CAPTURE_GATE`
+  rather than from macOS wording baked into `preflight`. The same treatment
+  is still owed to the Accessibility check, which is skipped by capability on
+  Windows but would say macOS things if a host ever declared CAP_DIALOG_KEY.
+- The `.cmd` spawn wrapper for `claude.cmd` — the shape is decidable on
+  either machine, the behaviour is not. See "What is left".
 - The macOS-worded spoken lines in `server._perform_dialog` ("macOS won't
-  let me send keystrokes"), which should come from the platform.
+  let me send keystrokes"), which should come from the platform. Lower
+  priority than it looks: measured, that line is unreachable on Windows,
+  because it needs a STAGED dialog and nothing can be staged when
+  `answer_dialog` is withdrawn. It is wrong wording waiting for a third
+  platform, not a bug a user can hit today.
 - Anything in phase 4.
 
 ## Rules that do not change on Windows

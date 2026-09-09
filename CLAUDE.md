@@ -4,7 +4,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with
 code in this repository.
 
 ## Overview
-JARVIS (Just A Rather Very Intelligent System) is a voice-first AI assistant for macOS. It runs locally on your machine, driving Claude Code for development tasks — every execution recorded as a *run* and watchable at `/dashboard`.
+JARVIS (Just A Rather Very Intelligent System) is a voice-first AI assistant for macOS and Windows. It runs locally on your machine, driving Claude Code for development tasks — every execution recorded as a *run* and watchable at `/dashboard`.
+
+macOS is the platform it was built on and the one CI gates on; Windows runs
+the same suite on a real box and withdraws exactly one tool
+(`answer_dialog` — see `jarvis_platform/windows/__init__.py` for why that is
+permanent). What each machine can do is stated once, in `jarvis_platform/`;
+nothing else in the codebase branches on the operating system.
 
 ## Quick Start
 Read `skills/jarvis-setup/SKILL.md` first — it carries setup and debugging
@@ -157,10 +163,17 @@ the commit why the alternative was worse.
   suite can keep patching them across an `importlib.reload(server)`.
   `windows/` declares only what it has actually built — add a capability in
   the same commit as its implementation, never before, or the whole design
-  becomes a wish list. Its modules are written from documentation rather
-  than measured on a machine, which is the opposite of this repo's usual
-  rule; each says so, and isolates the guess so a real box corrects it in
-  one place.
+  becomes a wish list. Its modules were written from documentation rather
+  than measured, which is the opposite of this repo's usual rule; that debt
+  is now mostly paid — `secrets`, `notifications` and `screen` have all been
+  corrected against a real box, and `docs/plans/windows-handoff.md` carries
+  the table of what is confirmed and what is still a guess. Read it before
+  touching that package.
+  A capability says what is BUILT on a host. Whether JARVIS may use it today
+  is a separate, runtime question its module answers — macOS declares
+  CAP_SCREEN_CAPTURE while TCC may refuse every call, and Windows declares it
+  while `JARVIS_SCREEN_CAPTURE` ships off. Do not make a capability follow a
+  permission: a withdrawn tool cannot tell the user how to grant it.
   Four consumers read it and they must not disagree: the `/internal/tool`
   dispatch gate, `brain.granted_tools`, the `JARVIS_DISABLED_TOOLS` env block
   in `_write_mcp_config`, and `preflight`'s `_CHECK_CAPABILITIES`. **Not**
@@ -182,6 +195,14 @@ the commit why the alternative was worse.
   binding on every implementation. `permission_granted()` returns True on a
   platform that needs no such permission; None means only that the probe
   could not run. Was `screen.py`
+- `jarvis_platform/windows/screen.py` — the same two tiers: `EnumWindows`
+  through ctypes, and a PowerShell + System.Drawing capture. Its consent
+  model is the interesting part, because Windows has none of its own — see
+  `JARVIS_SCREEN_CAPTURE` below. Read `_CAPTURE_PS1`'s comment before
+  touching the script: without `SetProcessDPIAware` the capture is a
+  plausible, correctly-sized photograph of the top-left corner of the screen
+  (measured: 1536x960 of a 3840x2400 display), which no assertion on the
+  RESULT can detect — `_refuse_a_partial_desktop` is what catches it
 - `repo_read.py` — Cheap, model-free reading of a repository (no `claude`
   subprocess)
 - `project_maker.py` — Creates a new project directory from a spoken name,
@@ -280,6 +301,16 @@ JARVIS builds**. It is only this repository's own copies that are gone.
 - `WEATHER_LOCATION_LABEL` / `WEATHER_LATITUDE` / `WEATHER_LONGITUDE` /
   `WEATHER_UNIT` (all optional) — override the auto-detected (public-IP)
   weather location and units
+- `JARVIS_SCREEN_CAPTURE` (optional, default OFF, **Windows only**) — whether
+  `look_at_screen` may photograph the screen. macOS has no such setting:
+  Screen Recording is a TCC permission, granted and revoked in System
+  Settings, outside JARVIS entirely. Windows asks nobody before a program
+  reads the screen, so shipping the tool there unchanged would have removed a
+  rail rather than ported one; this is that rail, rebuilt as the one part of
+  TCC worth copying — an explicit switch, off until set, revocable by the
+  same hand. Read at call time, so both directions take effect on the next
+  capture rather than the next restart. `what_is_on_screen` (window titles,
+  no pixels) is unaffected and needs no permission on either platform
 - `JARVIS_ALLOWED_ORIGINS` (optional) — extra origins the web boundary
   accepts, comma-separated. Only needed when the page is opened at an
   address JARVIS does not serve from itself (a LAN IP, a tunnel). Their

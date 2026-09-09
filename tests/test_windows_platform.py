@@ -34,24 +34,29 @@ def test_windows_declares_only_what_it_has_an_implementation_for():
     assert WINDOWS.capabilities == {jp.CAP_NOTIFICATIONS, jp.CAP_TERMINAL,
                                     jp.CAP_BROWSER, jp.CAP_EDITOR,
                                     jp.CAP_SESSION_STEER,
-                                    jp.CAP_WINDOW_LIST}
+                                    jp.CAP_WINDOW_LIST,
+                                    jp.CAP_SCREEN_CAPTURE}
 
 
-def test_windows_withdraws_the_two_tools_it_cannot_do():
+def test_windows_withdraws_only_the_one_tool_it_cannot_do():
     """`steer_session` left this list when its transport was written, not
     before: the roster publishes a named pipe here and `session_steer` writes
     to it, exercised over a real pipe in tests/test_session_steer.py.
+    `look_at_screen` left it once the pixels had a consent model to sit
+    behind — `JARVIS_SCREEN_CAPTURE`, shipped off.
 
-    The three that remain are two DECISIONS and one refusal. The screen pair
-    waits on a consent model — macOS gates them behind TCC and Windows asks
-    nobody, so shipping them unchanged would remove a safety rail rather than
-    port it. `answer_dialog` is permanent: there is no mapping from a pid to
-    a specific console window here (measured — one owning pid across every
+    That the switch defaults to OFF and the tool is still offered is not a
+    hole in "withdraw, never fake": a capability says what is BUILT here, and
+    macOS declares this one while TCC is free to refuse every call. See
+    tests/test_windows_screen.py.
+
+    `answer_dialog` is permanent: there is no mapping from a pid to a
+    specific console window here (measured — one owning pid across every
     window handle, because the owner is the terminal HOST and not the session
     inside it), and aiming a synthetic keystroke by focus instead is the one
     thing `base.Dialogs` forbids outright.
     """
-    assert WINDOWS.withdrawn_tools() == {"look_at_screen", "answer_dialog"}
+    assert WINDOWS.withdrawn_tools() == {"answer_dialog"}
 
 
 def test_windows_still_offers_everything_portable():
@@ -65,11 +70,9 @@ def test_the_unbuilt_provider_is_the_null_object_not_a_stub():
     """`dialogs` has no Windows implementation and must be the base null
     object — which refuses — rather than something that half-answers.
 
-    `screen` is no longer among them: it is a real module implementing
-    the CHEAP half of the protocol. That is not a half-answer, it is one
-    tier of two, and the capability set is what says which — CAP_WINDOW_LIST
-    declared, CAP_SCREEN_CAPTURE not. Its `capture` refuses for the same
-    reason the null object would.
+    `screen` is no longer among them: it is a real module, and now of both
+    tiers rather than one. Whether it may photograph anything on a given day
+    is `JARVIS_SCREEN_CAPTURE`, which is a permission and not a capability.
     """
     from jarvis_platform import base
     from jarvis_platform.windows import screen as win_screen
