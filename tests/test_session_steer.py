@@ -2,6 +2,7 @@ import asyncio
 import json
 import os
 import socket
+import sys
 import threading
 import time
 
@@ -923,3 +924,124 @@ async def test_a_staged_steer_is_never_performed_twice(wired, socket_factory,
     await server._perform_staged_steers()          # nothing left to do
     assert received == []
     assert len(run_store.list_steers(limit=50)) == 1
+
+
+# --- the same inbox, spelled as a Windows named pipe ------------------------
+#
+# `socket.AF_UNIX` does not exist here, so the tests above cannot build an
+# inbox at all. These build the OTHER kind, which is what a Claude Code
+# session on Windows actually publishes in `messagingSocketPath`, and assert
+# the same properties over it: one JSON line, the auth line first when there
+# is a token, and nothing at all sent for a prompt that was refused.
+#
+# The server end is a real pipe made with CreateNamedPipe rather than a mock,
+# for the same reason the POSIX fixture binds a real socket: what is under
+# test is whether the bytes leave this process correctly, and a fake would
+# only prove that the code called the fake.
+
+_HAS_PIPES = sys.platform == "win32"
+_needs_pipes = pytest.mark.skipif(
+    not _HAS_PIPES, reason="named pipes are the Windows inbox; POSIX has none")
+
+
+@pytest.fixture
+def fake_pipe_session(monkeypatch):
+    """A named pipe that accepts one connection and records what arrives."""
+    if not _HAS_PIPES:
+        pytest.skip("no named pipes here")
+    import ctypes
+    import ctypes.wintypes as w
+    import threading
+    import uuid
+
+    monkeypatch.delenv("CLAUDE_CODE_MESSAGING_TOKEN", raising=False)
+
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    # HANDLE is 64-bit in a 64-bit process and ctypes defaults to a 32-bit
+    # int return, so these prototypes are load-bearing, not decoration.
+    k32.CreateNamedPipeW.restype = w.HANDLE
+    k32.CreateNamedPipeW.argtypes = (w.LPCWSTR, w.DWORD, w.DWORD, w.DWORD,
+                                     w.DWORD, w.DWORD, w.DWORD, ctypes.c_void_p)
+    k32.ConnectNamedPipe.argtypes = (w.HANDLE, ctypes.c_void_p)
+    k32.ReadFile.argtypes = (w.HANDLE, ctypes.c_void_p, w.DWORD,
+                             ctypes.POINTER(w.DWORD), ctypes.c_void_p)
+    k32.CloseHandle.argtypes = (w.HANDLE,)
+
+    path = r"\\.\pipe\jarvis-test-" + uuid.uuid4().hex
+    received = []
+    ready = threading.Event()
+
+    def serve():
+        handle = k32.CreateNamedPipeW(
+            path, 0x00000003,                      # PIPE_ACCESS_DUPLEX
+            0x00000000,                            # PIPE_TYPE_BYTE | PIPE_WAIT
+            1, 65536, 65536, 0, None)
+        ready.set()
+        if handle == ctypes.c_void_p(-1).value:
+            return
+        try:
+            k32.ConnectNamedPipe(handle, None)
+            buf = ctypes.create_string_buffer(65536)
+            n = w.DWORD()
+            if k32.ReadFile(handle, buf, 65536, ctypes.byref(n), None):
+                received.append(buf.raw[:n.value].decode())
+        finally:
+            k32.CloseHandle(handle)
+
+    thread = threading.Thread(target=serve, daemon=True)
+    thread.start()
+    ready.wait(timeout=5)
+    yield path, received, thread
+    thread.join(timeout=2)
+
+
+@_needs_pipes
+def test_a_prompt_is_delivered_as_one_json_line_over_a_pipe(fake_pipe_session):
+    path, received, thread = fake_pipe_session
+
+    outcome = session_steer.post_to_session(path, "carry on with the redirect")
+
+    assert outcome == "sent"
+    thread.join(timeout=5)
+    msg = json.loads(received[0].strip())
+    assert msg == {"type": "user",
+                   "message": {"role": "user",
+                               "content": "carry on with the redirect"}}
+
+
+@_needs_pipes
+def test_an_auth_token_is_sent_first_over_a_pipe(fake_pipe_session, monkeypatch):
+    path, received, thread = fake_pipe_session
+    monkeypatch.setenv("CLAUDE_CODE_MESSAGING_TOKEN", "tok")
+
+    assert session_steer.post_to_session(path, "hello") == "sent"
+
+    thread.join(timeout=5)
+    lines = [l for l in received[0].split("\n") if l.strip()]
+    assert json.loads(lines[0]) == {"type": "auth", "token": "tok"}
+    assert json.loads(lines[1])["message"]["content"] == "hello"
+
+
+@_needs_pipes
+def test_an_empty_prompt_never_reaches_the_pipe(fake_pipe_session):
+    path, received, _thread = fake_pipe_session
+    assert session_steer.post_to_session(path, "   ") == "refused"
+    assert received == []
+
+
+@_needs_pipes
+def test_a_pipe_that_is_not_there_is_not_live():
+    """The stale-socket case, in its Windows spelling. `inbox_exists` answers
+    without opening an instance, so this never reaches the write."""
+    gone = r"\\.\pipe\jarvis-test-definitely-not-running"
+    assert session_steer.post_to_session(gone, "anyone home?") == "not_live"
+
+
+@_needs_pipes
+def test_a_pipe_path_is_recognised_as_one():
+    """The transport is chosen by the VALUE, so this is the whole of the
+    decision and it is asserted directly."""
+    import session_watch
+    assert session_watch.is_pipe(r"\\.\pipe\LOCAL\cc-msg-abc") is True
+    assert session_watch.is_pipe("/tmp/cc-socks/s.sock") is False
+    assert session_watch.is_pipe(None) is False

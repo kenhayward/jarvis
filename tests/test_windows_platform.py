@@ -32,12 +32,26 @@ def test_windows_declares_only_what_it_has_an_implementation_for():
     a capability in the same commit as its implementation, never before —
     the whole design fails the moment this list is a wish."""
     assert WINDOWS.capabilities == {jp.CAP_NOTIFICATIONS, jp.CAP_TERMINAL,
-                                    jp.CAP_BROWSER, jp.CAP_EDITOR}
+                                    jp.CAP_BROWSER, jp.CAP_EDITOR,
+                                    jp.CAP_SESSION_STEER}
 
 
-def test_windows_withdraws_the_four_tools_it_cannot_yet_do():
+def test_windows_withdraws_the_three_tools_it_cannot_do():
+    """`steer_session` left this list when its transport was written, not
+    before: the roster publishes a named pipe here and `session_steer` writes
+    to it, exercised over a real pipe in tests/test_session_steer.py.
+
+    The three that remain are two DECISIONS and one refusal. The screen pair
+    waits on a consent model — macOS gates them behind TCC and Windows asks
+    nobody, so shipping them unchanged would remove a safety rail rather than
+    port it. `answer_dialog` is permanent: there is no mapping from a pid to
+    a specific console window here (measured — one owning pid across every
+    window handle, because the owner is the terminal HOST and not the session
+    inside it), and aiming a synthetic keystroke by focus instead is the one
+    thing `base.Dialogs` forbids outright.
+    """
     assert WINDOWS.withdrawn_tools() == {
-        "look_at_screen", "what_is_on_screen", "answer_dialog", "steer_session"}
+        "look_at_screen", "what_is_on_screen", "answer_dialog"}
 
 
 def test_windows_still_offers_everything_portable():

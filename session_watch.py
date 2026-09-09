@@ -164,7 +164,18 @@ _PIPE_DIR = "//./pipe"
 _PIPE_PREFIX = "\\\\.\\pipe\\"                    # literally:  \\.\pipe\
 
 
-def _inbox_exists(socket_path: str | None) -> bool:
+def is_pipe(socket_path: str | None) -> bool:
+    """Whether this inbox is a Windows named pipe rather than a socket file.
+
+    The one place that knows what a pipe path looks like. Both the existence
+    check below and `session_steer`'s choice of transport ask this instead of
+    matching the prefix for themselves, so the shape is written down once and
+    neither has to import a private name to get at it.
+    """
+    return bool(socket_path) and socket_path.startswith(_PIPE_PREFIX)
+
+
+def inbox_exists(socket_path: str | None) -> bool:
     """Whether the inbox a roster entry names is actually there.
 
     On POSIX it is an AF_UNIX socket, which is a file, and `Path.exists()`
@@ -199,7 +210,7 @@ def _inbox_exists(socket_path: str | None) -> bool:
     """
     if not socket_path:
         return False
-    if socket_path.startswith(_PIPE_PREFIX):
+    if is_pipe(socket_path):
         name = socket_path[len(_PIPE_PREFIX):].lower()
         try:
             return any(entry.lower() == name for entry in os.listdir(_PIPE_DIR))
@@ -232,7 +243,7 @@ class RosterEntry:
         Measured: 4 of 17 live entries had none. `ListAgents` cannot see those
         at all, which is why this watcher exists.
         """
-        return _inbox_exists(self.socket_path)
+        return inbox_exists(self.socket_path)
 
 
 def _parse_entry(path: Path, root: Path) -> RosterEntry | None:
