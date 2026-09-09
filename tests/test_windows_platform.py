@@ -322,7 +322,11 @@ def test_a_lockdown_that_reports_success_but_changed_nothing_still_raises(
 
     def _accepted_but_ineffective(*argv):
         if "/grant:r" in argv:
-            return 0, ""                       # "Successfully processed 1 files"
+            # Exit 0 with a body saying it did nothing. icacls really does
+            # this, and that line is what tells "it declined" apart from "it
+            # worked and something undid it afterwards" — the question still
+            # open about the runner, and unanswerable from the rc alone.
+            return 0, "Successfully processed 0 files; Failed processing 1 files"
         return 0, ("C:\\x\\tool-token RUNNERVM\\runneradmin:(F)\n"
                    "                 NT AUTHORITY\\SYSTEM:(I)(F)\n"
                    "                 BUILTIN\\Administrators:(I)(F)\n"
@@ -338,6 +342,7 @@ def test_a_lockdown_that_reports_success_but_changed_nothing_still_raises(
     said = str(caught.value)
     assert "reported success" in said, "the distinction is the whole point"
     assert "nt authority\\system" in said, "and it names what was left behind"
+    assert "Failed processing 1 files" in said, "and quotes icacls's own words"
 
 
 def test_a_token_that_cannot_be_locked_down_is_deleted_not_left(monkeypatch, tmp_path):

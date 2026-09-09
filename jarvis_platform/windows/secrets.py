@@ -195,9 +195,16 @@ def _lock_down(path: Path) -> None:
     # docstrings have always described.
     why = _dacl_mismatch(path)
     if why is not None:
+        # icacls's OWN words are carried too, not just the resulting DACL.
+        # `rc == 0` is not the same as "it did the work": icacls can print
+        # "Successfully processed 0 files; Failed processing 1 files" and
+        # still exit zero, and that line is the difference between "it
+        # declined" and "it succeeded and something undid it afterwards" —
+        # which is exactly the question left open about the CI runner.
+        # Without this the two look identical from here.
         raise PrivateFileUnsupported(
             f"icacls reported success but {path} is still not private "
-            f"({why})")
+            f"({why}); icacls said {out.strip()[:200]!r}")
 
 
 def _dacl_mismatch(path: Path) -> str | None:
