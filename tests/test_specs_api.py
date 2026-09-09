@@ -508,3 +508,64 @@ def test_a_touch_that_moves_nothing_is_not_a_change(wired):
 
     assert specs.list_documents(str(root))[0]["path"] == newest["path"],         "the touch must not have reordered anything"
     assert server._specs_fingerprint() == before
+
+
+def _approve_at(root, relative, when, by="voice"):
+    """Record an approval with a chosen `approved_at`.
+
+    Forced rather than raced for, the same discipline as the mtime test
+    above. Two `record_approval` calls back to back can share a timestamp on
+    a coarse clock -- this port measured ten files written in a row sharing
+    one `st_mtime` -- so a test that waited for the second stamp to differ
+    would be the flake rather than the proof.
+    """
+    real = specs.time.time
+    specs.time.time = lambda: when
+    try:
+        return specs.record_approval(str(root), relative, by)
+    finally:
+        specs.time.time = real
+
+
+def test_approving_the_same_text_again_is_a_change(wired):
+    """The gap the fingerprint had after the mtime came out of it.
+
+    The band at the top of a document says WHEN it was approved --
+    `specs.ts` `statusBand`, `approved ${fmtWhen(approval.approved_at)}` --
+    and the fingerprint carried only the approval's STATE. Approving a
+    document whose text is already approved rewrites `approved_at`, leaves
+    the state at "approved" and the digest untouched, and so left the
+    fingerprint byte-identical: the open tab went on showing the older time
+    until something unrelated moved.
+
+    Not a corner: `approve_document` has no once-only guard, so saying
+    "approve it" twice does this, and `start_build` records an approval of
+    its own every time it runs -- a second build from an unrevised spec is
+    the same case.
+    """
+    server, root, relative = wired
+    _approve_at(root, relative, 1_000_000.0)
+    before = server._specs_fingerprint()
+    assert specs.approval_of(str(root), relative)["state"] == "approved"
+
+    _approve_at(root, relative, 1_000_600.0)
+
+    assert specs.approval_of(str(root), relative)["state"] == "approved", \
+        "the state must NOT have moved -- that is the whole point of this"
+    assert server._specs_fingerprint() != before, \
+        "the page shows a new approval time and the fingerprint did not move"
+
+
+def test_who_approved_it_is_part_of_the_fingerprint_too(wired):
+    """`approved_by` is in the payload the client reconciles against, even
+    though the band does not paint it today. Pinned deliberately: a field
+    the client holds can go stale in its hands whether or not it is on
+    screen yet, and this needs no clock to state.
+    """
+    server, root, relative = wired
+    _approve_at(root, relative, 1_000_000.0, by="voice")
+    before = server._specs_fingerprint()
+
+    _approve_at(root, relative, 1_000_000.0, by="dashboard")
+
+    assert server._specs_fingerprint() != before
