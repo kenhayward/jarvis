@@ -287,11 +287,62 @@ def test_the_lockdown_breaks_inheritance_and_grants_by_sid(monkeypatch):
     is ambiguous and its SID is not."""
     seen = {}
     monkeypatch.setattr(win_secrets, "_identity", ("desktop-abc\\ken", "S-1-5-21-9"))
-    monkeypatch.setattr(win_secrets, "_run",
-                        lambda *a: (seen.update(argv=list(a)), (0, ""))[1])
+
+    def _fake_run(*argv):
+        # Two calls now: the change, then the read that VERIFIES it. They are
+        # told apart by the flags rather than by call order, so this does not
+        # quietly pass if the two are ever swapped.
+        if "/grant:r" in argv:
+            seen["argv"] = list(argv)
+            return 0, ""
+        return 0, ("C:\\x\\tool-token DESKTOP-ABC\\ken:(F)\n"
+                   "\n"
+                   "Successfully processed 1 files; Failed processing 0 files\n")
+
+    monkeypatch.setattr(win_secrets, "_run", _fake_run)
     win_secrets._lock_down("C:\\x\\tool-token")
     assert seen["argv"] == ["icacls", "C:\\x\\tool-token", "/inheritance:r",
                             "/grant:r", "*S-1-5-21-9:F"]
+
+
+def test_a_lockdown_that_reports_success_but_changed_nothing_still_raises(
+        monkeypatch):
+    """icacls exiting 0 says the command was ACCEPTED, not that the DACL now
+    reads the way this module promises.
+
+    That gap is not hypothetical: on the Windows CI runner
+    `/inheritance:r /grant:r` exits 0 and leaves all three inherited ACEs in
+    place, with our grant correctly added and nothing removed. Unverified,
+    the file is created, reported private, and only refused later by
+    `adopt_private` — far from the cause, and after a token the promise does
+    not cover has already been written into it.
+    """
+    monkeypatch.setattr(win_secrets, "_identity",
+                        ("runnervm\\runneradmin", "S-1-5-21-9"))
+
+    def _accepted_but_ineffective(*argv):
+        if "/grant:r" in argv:
+            # Exit 0 with a body saying it did nothing. icacls really does
+            # this, and that line is what tells "it declined" apart from "it
+            # worked and something undid it afterwards" — the question still
+            # open about the runner, and unanswerable from the rc alone.
+            return 0, "Successfully processed 0 files; Failed processing 1 files"
+        return 0, ("C:\\x\\tool-token RUNNERVM\\runneradmin:(F)\n"
+                   "                 NT AUTHORITY\\SYSTEM:(I)(F)\n"
+                   "                 BUILTIN\\Administrators:(I)(F)\n"
+                   "                 OWNER RIGHTS:(I)(F)\n"
+                   "\n"
+                   "Successfully processed 1 files; Failed processing 0 files\n")
+
+    monkeypatch.setattr(win_secrets, "_run", _accepted_but_ineffective)
+
+    with pytest.raises(PrivateFileUnsupported) as caught:
+        win_secrets._lock_down("C:\\x\\tool-token")
+
+    said = str(caught.value)
+    assert "reported success" in said, "the distinction is the whole point"
+    assert "nt authority\\system" in said, "and it names what was left behind"
+    assert "Failed processing 1 files" in said, "and quotes icacls's own words"
 
 
 def test_a_token_that_cannot_be_locked_down_is_deleted_not_left(monkeypatch, tmp_path):
