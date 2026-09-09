@@ -346,8 +346,18 @@ async def test_store_failure_still_reaches_terminal_state(env):
     ex = mod.RunExecutor(_ExplodingStore(store), claude_path=claude,
                          grace_sec=5)
     run_id = await ex.spawn("do a thing", "proj", str(tmp), "api")
-    await _await_status(store, run_id, store.RunStatus.RUNNING)
-    pid = store.get_run(run_id)["pid"]
+    # Waits for the PID, not for the status to read RUNNING. What the rest of
+    # this test needs is the pid — to prove no child is left behind — and
+    # `running` is merely the state it is usually recorded in.
+    #
+    # It is a TRANSIENT state, and this test is the one that makes it
+    # briefest: `_ExplodingStore` fails the write, so the run can go
+    # running -> failed between two polls of a 10 ms loop and never be
+    # observed in between. Failed exactly that way on the macOS CI leg —
+    # "run never reached 'running'; last={... 'status': 'failed' ...}" — while
+    # the same commit passed in the parallel run. The pid, once recorded,
+    # stays recorded.
+    pid = await _await_pid(store, run_id)
 
     run = await ex.wait_for(run_id, timeout=15)
     assert run["status"] in store.RunStatus.TERMINAL, run

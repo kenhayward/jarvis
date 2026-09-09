@@ -534,7 +534,12 @@ async def test_a_warmup_that_errors_never_reports_ready(tmp_path, monkeypatch):
         assert await b.start() is False
         assert not b.ready
         assert await _wait_until(lambda: b.failed, 8.0)
-        assert not b.running
+        # Waited for, not assumed to follow. `failed` is set before `running`
+        # clears, so asserting the second immediately after seeing the first
+        # races the teardown — and loses it under full-suite load, which is
+        # exactly how this failed while passing 6 times out of 6 alone.
+        assert await _wait_until(lambda: not b.running, 8.0), \
+            "the brain reported failed but never stopped running"
         assert any(s == "failed" for s, _ in states)
     finally:
         await b.stop()
