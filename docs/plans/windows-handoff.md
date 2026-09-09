@@ -57,11 +57,24 @@ job's `continue-on-error`.
   as its own change, after a run or two comes back clean. Do not remove it
   on a prediction: a gate that goes red intermittently is worse than one
   that is honestly amber.
-- macOS suite: 2523 passed, 2 failed, from before any of this. **Not re-run
-  here — it cannot be, and it remains the gate.** Note two of the PRs below
-  changed a shared module's public surface (`session_watch.inbox_exists`,
-  `is_pipe`) and one added a `Secrets` protocol method (`restrict`), so the
-  macOS leg is doing real work on those and not just confirming a no-op.
+- macOS suite: **2564 passed, 1 failed** as of 2026-09-09, read off the CI
+  leg rather than guessed — the 2523/2 figure that stood here for weeks was
+  stale. It still cannot be run from the Windows box, and it remains the gate.
+  The single failure was **not** from the Windows work: it is
+  `test_the_screen_switch_round_trips_through_the_settings_page`, which PR #27
+  left asserting the WINDOWS default (`off is the shipped state`) above the
+  `if not gated: return` that exists to skip exactly that. macOS gates capture
+  through TCC, so `off_by_default` is False there and the assertion could only
+  ever fail on the box nobody was running. **main was red from PR #27 until it
+  was fixed**, which is the port's own rule 1 broken for two merges.
+  The lesson is the mirror image of the one this whole document is about: a
+  Windows-shaped claim asserted unconditionally is as invisible from Windows
+  as a macOS-shaped one is from a Mac. That test is now parametrised over both
+  host shapes so either box catches it.
+- The macOS leg is doing real work on this port, not confirming a no-op:
+  `session_watch.inbox_exists` / `is_pipe`, `Secrets.restrict`,
+  `Screen.CAPTURE_GATE`, the `conftest.py` rails, and now `brain.py`'s launch
+  prompt, which changed on BOTH platforms.
 
 ## What is left
 

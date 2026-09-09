@@ -13,6 +13,8 @@ import sys
 from pathlib import Path
 
 import pytest
+
+from jarvis_platform.base import CaptureGate
 from fastapi.testclient import TestClient
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -248,25 +250,68 @@ async def test_the_status_endpoint_shows_the_fallback(client, fallen_back):
     assert c.get("/api/settings/status").json()["tts_fallback_from"] == "piper"
 
 
-def test_the_screen_switch_round_trips_through_the_settings_page(client):
+class _UngatedScreen:
+    """A host that CAN capture and has no switch of its own — macOS's shape.
+
+    `off_by_default=False` is what macOS really declares (see
+    jarvis_platform/macos/screen.py): the gate is TCC, granted and revoked in
+    System Settings, outside JARVIS entirely. `permission_granted()` then
+    answers whatever TCC says, and on the CI runner it says True.
+    """
+    CAPTURE_GATE = CaptureGate(
+        name="Screen Recording", off_by_default=False,
+        remedy="Grant it in System Settings, then restart the app.")
+
+    @staticmethod
+    def permission_granted():
+        return True
+
+    @staticmethod
+    async def windows():
+        return []
+
+
+@pytest.mark.parametrize("ungate", [False, True],
+                         ids=["this host", "a host whose gate is the OS's"])
+def test_the_screen_switch_round_trips_through_the_settings_page(client, monkeypatch, ungate):
     """The consent model is only real if the page can turn it OFF as easily
     as on, so the endpoint behind that checkbox is worth pinning.
 
     `screen_capture_gated` is a separate fact from `screen_capture`, and the
     page needs both: macOS gates capture through System Settings, so a toggle
     drawn there would be a switch JARVIS does not own and cannot honour.
+
+    **Run under BOTH host shapes, on every box, and that is the point.** This
+    test used to assert the Windows default unconditionally, which is only
+    true where JARVIS owns the switch. On a Windows box it passed; on macOS it
+    failed, and main stayed red from PR #27 until someone looked at the gate
+    rather than at the box in front of them. Parametrised, the ungated shape
+    now runs HERE, so putting that assertion back above the guard fails on
+    whichever machine the author happens to be using.
     """
     import jarvis_platform as jp
+    from jarvis_platform.fake import fake_host
     c, server = client
+    if ungate:
+        monkeypatch.setattr(jp, "_HOST", fake_host(screen=_UngatedScreen))
     body = c.get("/api/settings/status").json()
 
     gated = (jp.can(jp.CAP_SCREEN_CAPTURE)
              and jp.current().screen.CAPTURE_GATE.off_by_default)
     assert body["screen_capture_gated"] is gated
-    assert body["screen_capture"] is False, "off is the shipped state"
 
     if not gated:
         return
+
+    # BELOW the guard, not above it. "Off is the shipped state" is a fact
+    # about a host that HAS a switch of its own, and only Windows does:
+    # macOS gates capture through TCC, so `off_by_default` is False there,
+    # `permission_granted()` answers whatever System Settings says, and this
+    # line asserted the Windows default against it. It turned the macOS leg
+    # red at PR #27 and stayed red, because the box it was written on is the
+    # one box where it is true. See the test below, which now runs the
+    # ungated shape everywhere.
+    assert body["screen_capture"] is False, "off is the shipped state"
 
     assert c.post("/api/settings/keys",
                   json={"key_name": "JARVIS_SCREEN_CAPTURE",
@@ -284,6 +329,32 @@ def test_the_screen_switch_round_trips_through_the_settings_page(client):
     assert c.post("/api/settings/keys",
                   json={"key_name": "JARVIS_SCREEN_CAPTURE",
                         "key_value": "on"}).status_code == 400
+
+
+def test_a_host_with_no_switch_of_its_own_is_reported_honestly(client, monkeypatch):
+    """The shape that turned the macOS leg red, run HERE.
+
+    Nothing exercised an ungated host on a Windows box, so an assertion of
+    the Windows default ("off is the shipped state") sat unguarded in the
+    test above and could only fail somewhere nobody was looking. It did, for
+    two PRs.
+
+    A host that gates capture outside JARVIS reports `screen_capture_gated`
+    False — the page must not draw a switch JARVIS does not own — and
+    `screen_capture` follows the platform's own answer rather than a default
+    this project chose for a different operating system.
+    """
+    import jarvis_platform as jp
+    from jarvis_platform.fake import fake_host
+    c, server = client
+    monkeypatch.setattr(jp, "_HOST", fake_host(screen=_UngatedScreen))
+
+    body = c.get("/api/settings/status").json()
+    assert body["screen_capture_gated"] is False, (
+        "a host whose gate is the operating system's must not have a switch "
+        "drawn for it")
+    assert body["screen_capture"] is True, (
+        "the platform said it may capture; the page must say so too")
 
 
 def test_no_startup_announcement_can_reach_the_voice(client):
