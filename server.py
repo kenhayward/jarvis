@@ -6864,7 +6864,26 @@ SETTABLE_ENV_KEYS = frozenset({
     # `_env_value_problem` below: a backend must be one JARVIS has, and a
     # piper voice must NAME a model, never point at a file.
     "JARVIS_TTS_BACKEND", "JARVIS_TTS_VOICE", "JARVIS_PIPER_VOICE",
+    # The eyes, on a host whose gate is a JARVIS setting rather than the
+    # operating system's (Windows: nothing is asked before a program reads
+    # the screen, so the rail is ours). Settable here because the consent
+    # model is only real if the user can REVOKE it as easily as they granted
+    # it, and `.env` by hand is not that. Restricted to a plain boolean by
+    # `_env_value_problem`: this one decides whether JARVIS may photograph
+    # the desk, so it does not get to be any string that happens to fit.
+    #
+    # `_write_env_key` updates os.environ too, and `screen.permission_granted`
+    # reads it per call, so both directions take effect on the next capture.
+    "JARVIS_SCREEN_CAPTURE",
 })
+
+# Settings that are a yes or a no. Written as one of these two words exactly,
+# so `.env` reads as a decision rather than as a puzzle -- and so that a value
+# like "off" cannot be stored where `screen.permission_granted` counts only
+# "1/true/yes/on" as yes and would silently read it as a NO the user thought
+# was a yes.
+ENV_BOOLEAN_KEYS = frozenset({"JARVIS_SCREEN_CAPTURE"})
+ENV_BOOLEAN_VALUES = ("true", "false")
 
 # A value may not carry anything that ends the line it is written on.
 #
@@ -6925,6 +6944,8 @@ def _env_value_problem(key: str, value: str) -> str | None:
         return "A setting cannot begin or end with a space or a quote"
     if key == "JARVIS_TTS_BACKEND" and value and value not in tts.BACKENDS:
         return f"The voice backend must be one of: {', '.join(tts.BACKENDS)}"
+    if key in ENV_BOOLEAN_KEYS and value not in ENV_BOOLEAN_VALUES:
+        return f"That setting is {' or '.join(ENV_BOOLEAN_VALUES)}"
     if key == "JARVIS_PIPER_VOICE" and value and not tts.is_safe_voice_name(value):
         # A model is loaded and executed by onnxruntime. Over HTTP this may
         # only be the NAME of one in the voices directory; a hand-edited .env
@@ -7073,6 +7094,18 @@ async def api_settings_status():
             "fish_voice_id": bool(env_dict.get("FISH_VOICE_ID", "").strip()),
             "user_name": env_dict.get("USER_NAME", ""),
         },
+        # The eyes. Two separate facts, because the page must not offer a
+        # switch that would do nothing: `screen_capture_gated` says this host
+        # is one where the gate is JARVIS's own setting rather than the
+        # operating system's, and `screen_capture` is where that switch
+        # currently stands. On macOS the first is false — Screen Recording
+        # lives in System Settings and JARVIS has no business drawing a
+        # toggle for it.
+        "screen_capture_gated": (
+            jarvis_platform.can(jarvis_platform.CAP_SCREEN_CAPTURE)
+            and jarvis_platform.current().screen.CAPTURE_GATE.off_by_default),
+        "screen_capture": jarvis_platform.current().screen.permission_granted()
+                          is True,
     }
 
 @app.get("/api/settings/preferences")

@@ -308,6 +308,28 @@ class Window:
     frontmost: bool
 
 
+@dataclass(frozen=True)
+class CaptureGate:
+    """How this host decides whether JARVIS may capture, in words to reuse.
+
+    Exists so `preflight` can say something true about a refusal without
+    knowing which platform it is on. It had macOS's answer written into it —
+    the name of the permission, and a remedy naming System Settings — which
+    was invisible while macOS was the only host declaring
+    CAP_SCREEN_CAPTURE and became wrong the moment a second one did.
+
+    `off_by_default` is the field that matters most, and it decides a
+    STATUS. On macOS a refusal is a surprise worth speaking at startup: the
+    user granted Screen Recording and something took it away. Where the gate
+    is a JARVIS setting that ships OFF, "off" is the intended resting state,
+    and announcing it every boot is nagging the user about a decision they
+    already made — so it warns (logged, not spoken) rather than fails.
+    """
+    name: str            # as it would be said: "Screen Recording"
+    off_by_default: bool
+    remedy: str
+
+
 class Screen(Protocol):
     """The machine's own screen, priced in two tiers.
 
@@ -336,6 +358,12 @@ class Screen(Protocol):
 
     async def windows(self) -> list[Window]: ...
 
+    # What `permission_granted` is answering ABOUT, so a caller can report a
+    # refusal in this platform's own terms. A constant on the module rather
+    # than a method: it never varies at runtime, and the implementations here
+    # are modules.
+    CAPTURE_GATE: CaptureGate
+
 
 class _NoScreen:
     """A platform whose eyes have not been built.
@@ -345,6 +373,12 @@ class _NoScreen:
     something JARVIS says. Reached only behind a withdrawn
     CAP_SCREEN_CAPTURE / CAP_WINDOW_LIST.
     """
+
+    CAPTURE_GATE = CaptureGate(
+        name="screen access",
+        off_by_default=True,
+        remedy="This platform has no screen support built, so there is "
+               "nothing to grant.")
 
     def permission_granted(self) -> bool | None:
         return None

@@ -413,31 +413,37 @@ def _check_screen_recording_sync() -> Check:
     one) and NEVER captures anything to find out -- a screenshot the user did
     not ask for, at every boot, is precisely what this capability must not do.
     """
+    screen = jarvis_platform.current().screen
+    gate = screen.CAPTURE_GATE
     try:
-        granted = jarvis_platform.current().screen.permission_granted()
+        granted = screen.permission_granted()
     except Exception as e:  # the module must never take startup down
         return Check(name="screen_recording", status=STATUS_WARN,
-                     message=f"Could not determine Screen Recording status: {e}")
+                     message=f"Could not determine {gate.name} status: {e}")
 
     if granted is True:
         return Check(name="screen_recording", status=STATUS_OK,
-                     message="JARVIS has Screen Recording access.")
+                     message=f"JARVIS has {gate.name} access.")
     if granted is None:
         return Check(
             name="screen_recording", status=STATUS_WARN,
-            message=("Could not determine Screen Recording status: not macOS, "
-                     "or CoreGraphics could not be asked."))
+            message=f"Could not determine {gate.name} status: the probe "
+                    f"could not be run.")
+    # Off is not always a fault. Where the gate is a JARVIS setting that
+    # SHIPS off -- Windows, which asks nobody before a program reads the
+    # screen and so has its rail rebuilt as a switch -- the resting state is
+    # off, and a FAIL here would have JARVIS announce it out loud at every
+    # single boot. `_run_preflight` speaks fails and only logs warns, which
+    # is exactly the distinction wanted: say it if asked, do not nag.
+    #
+    # On macOS a refusal IS news. The user granted Screen Recording once and
+    # something took it away, and that is worth hearing.
     return Check(
         name="screen_recording",
-        status=STATUS_FAIL,
-        message="JARVIS has not been granted Screen Recording; look_at_screen will refuse.",
-        remedy=(
-            "macOS attributes this to the app that launched JARVIS, not to "
-            "python or screencapture -- the same rule as Accessibility above. "
-            "Grant that app Screen Recording under System Settings -> Privacy "
-            "& Security -> Screen & System Audio Recording, then RESTART it: "
-            "the grant only reaches a process started after it was given."
-        ),
+        status=STATUS_WARN if gate.off_by_default else STATUS_FAIL,
+        message=f"JARVIS has not been granted {gate.name}; look_at_screen "
+                f"will refuse.",
+        remedy=gate.remedy,
     )
 
 
@@ -804,9 +810,15 @@ def _phrase_for(check: Check) -> str:
             return "I don't have Accessibility permission"
         return "Accessibility couldn't be checked"
     if name == "screen_recording":
+        # The gate's own name, not "Screen Recording" hard-coded: on macOS
+        # that IS the name and this sentence is unchanged, and on a host
+        # whose gate is a JARVIS setting it reads "I don't have screen
+        # capture permission" rather than naming a macOS permission that
+        # does not exist there.
+        gate = jarvis_platform.current().screen.CAPTURE_GATE
         if "not been granted" in msg:
-            return "I don't have Screen Recording permission"
-        return "Screen Recording couldn't be checked"
+            return f"I don't have {gate.name} permission"
+        return f"{gate.name} couldn't be checked"
     if name == "voice":
         if "FISH_API_KEY" in msg:
             return "I have no Fish Audio key"

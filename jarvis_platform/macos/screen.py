@@ -51,7 +51,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-from ..base import Screen, ScreenError, Shot, Window  # noqa: F401
+from ..base import CaptureGate, Screen, ScreenError, Shot, Window  # noqa: F401
 
 log = logging.getLogger("jarvis.platform.screen")
 
@@ -172,6 +172,23 @@ def permission_granted() -> bool | None:
 
 _NO_PERMISSION = (
     "I've not been granted Screen Recording, sir, so I can't see your screen")
+
+# The gate, in words. Lifted verbatim out of `preflight._check_screen_recording`,
+# which had macOS's answer written into it as though it were every host's --
+# invisible while macOS was the only one declaring CAP_SCREEN_CAPTURE, wrong
+# the moment a second one did.
+#
+# `off_by_default` is False: TCC is granted by the user once, so a refusal
+# here means something took it away, and that is worth saying out loud at
+# startup rather than only logging.
+CAPTURE_GATE = CaptureGate(
+    name="Screen Recording",
+    off_by_default=False,
+    remedy=("macOS attributes this to the app that launched JARVIS, not to "
+            "python or screencapture -- the same rule as Accessibility above. "
+            "Grant that app Screen Recording under System Settings -> Privacy "
+            "& Security -> Screen & System Audio Recording, then RESTART it: "
+            "the grant only reaches a process started after it was given."))
 
 
 # ── PNG and BMP, read with nothing but the standard library ────────────────

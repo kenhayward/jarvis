@@ -338,39 +338,101 @@ async def test_accessibility_skipped_off_darwin(monkeypatch):
 # `_check_screen_recording_sync` is capability-gated in production
 # (`preflight._CHECK_CAPABILITIES`), and on a platform that does not declare
 # CAP_SCREEN_CAPTURE it answers `warn` — "this machine has no such
-# permission to check" — whatever the macOS module is patched to say. The
-# three below assert the macOS ANSWERS, so they belong to a host that has
-# the capability. Gated on the same condition production uses rather than on
-# `sys.platform`, so they follow the capability if it ever moves.
+# permission to check" — whatever the screen module is patched to say. The
+# ones below assert what the check does when the host HAS the capability, so
+# they are gated on the same condition production uses rather than on
+# `sys.platform` — they follow the capability if it ever moves.
 _needs_screen_capture = pytest.mark.skipif(
     not jarvis_platform.can(jarvis_platform.CAP_SCREEN_CAPTURE),
     reason="no CAP_SCREEN_CAPTURE here; the check is withdrawn, not failing")
 
 
+# THIS HOST's screen module, never `jarvis_platform.macos.screen` by name.
+#
+# These tests named the macOS module and were invisible off macOS only
+# because the skip above hid them -- CAP_SCREEN_CAPTURE was macOS-only, so
+# they never ran anywhere the patch would have missed. Windows declaring the
+# capability un-hid them, and they failed at once: the check reads
+# `current().screen`, which is the Windows module, and the patch was landing
+# on one nothing calls. The same shape as the launcher fixtures, exposed by
+# a capability moving rather than by a platform moving.
+def _this_hosts_screen():
+    return jarvis_platform.current().screen
+
+
 @_needs_screen_capture
 def test_screen_recording_granted(monkeypatch):
-    monkeypatch.setattr(jarvis_platform.macos.screen, "permission_granted", lambda: True)
+    monkeypatch.setattr(_this_hosts_screen(), "permission_granted", lambda: True)
     check = preflight._check_screen_recording_sync()
     assert check.status == STATUS_OK
     assert check.remedy is None
 
 
 @_needs_screen_capture
-def test_screen_recording_not_granted_is_fail_with_the_launching_app_remedy(monkeypatch):
-    monkeypatch.setattr(jarvis_platform.macos.screen, "permission_granted", lambda: False)
+def test_a_refusal_carries_this_hosts_own_remedy(monkeypatch):
+    """The check does not know which platform it is on, and must not: the
+    words come from `screen.CAPTURE_GATE`, which is the host's own
+    statement of what its gate is and how to open it."""
+    screen = _this_hosts_screen()
+    monkeypatch.setattr(screen, "permission_granted", lambda: False)
     check = preflight._check_screen_recording_sync()
-    assert check.status == STATUS_FAIL
-    assert check.remedy
-    assert "Screen Recording" in check.remedy
-    assert "launched" in check.remedy.lower()
+    assert check.remedy == screen.CAPTURE_GATE.remedy
+    assert screen.CAPTURE_GATE.name in check.message
+
+
+def test_a_gate_the_user_never_granted_fails_and_a_default_off_one_warns():
+    """The status is not a constant, and the difference is whether JARVIS
+    SPEAKS at startup: `_run_preflight` says fails out loud and only logs
+    warns.
+
+    macOS: the user granted Screen Recording once and something took it
+    away. That is news, and worth hearing.
+
+    A host whose gate is a JARVIS setting that ships OFF: off is the resting
+    state the project chose, and announcing it at every boot would be
+    nagging the user about a decision they have not made yet.
+
+    Asserted against BOTH hosts' gates from wherever this runs, rather than
+    against the one underfoot, so neither half can rot unnoticed on the
+    platform that cannot run the other.
+    """
+    from jarvis_platform.macos import screen as macos_screen
+    from jarvis_platform.windows import screen as windows_screen
+    assert macos_screen.CAPTURE_GATE.off_by_default is False
+    assert windows_screen.CAPTURE_GATE.off_by_default is True
+
+
+def test_the_macos_remedy_still_names_the_launching_app():
+    """The lesson that remedy exists to carry, pinned where it now lives.
+
+    macOS attributes the permission to the app that LAUNCHED JARVIS, not to
+    python or screencapture, and a user who does not know that will grant it
+    to the wrong thing and see no change. Checked against the constant so it
+    holds when this suite runs on Windows too.
+    """
+    from jarvis_platform.macos import screen as macos_screen
+    remedy = macos_screen.CAPTURE_GATE.remedy
+    assert "Screen Recording" in remedy
+    assert "launched" in remedy.lower()
+    assert "RESTART" in remedy
+
+
+def test_the_windows_remedy_names_the_setting_and_not_a_system_pane():
+    """Windows asks nobody, so there is no pane to send anyone to. The
+    remedy has to name the switch instead -- and say that it takes effect
+    without a restart, which is the part that differs from macOS."""
+    from jarvis_platform.windows import screen as windows_screen
+    remedy = windows_screen.CAPTURE_GATE.remedy
+    assert windows_screen.CAPTURE_ENV in remedy
+    assert "System Settings" not in remedy
+    assert "no restart" in remedy.lower()
 
 
 @_needs_screen_capture
 def test_screen_recording_undeterminable_is_warn_not_fail(monkeypatch):
-    """None means the probe could not run -- off macOS, or a macOS that moved
-    the symbol. Reporting that as a missing permission would send the user to
-    a settings pane over nothing."""
-    monkeypatch.setattr(jarvis_platform.macos.screen, "permission_granted", lambda: None)
+    """None means the probe could not run. Reporting that as a missing
+    permission would send the user to a settings pane over nothing."""
+    monkeypatch.setattr(_this_hosts_screen(), "permission_granted", lambda: None)
     check = preflight._check_screen_recording_sync()
     assert check.status == STATUS_WARN
 
@@ -380,7 +442,7 @@ def test_screen_recording_check_never_raises(monkeypatch):
     def boom():
         raise RuntimeError("CoreGraphics went sideways")
 
-    monkeypatch.setattr(jarvis_platform.macos.screen, "permission_granted", boom)
+    monkeypatch.setattr(_this_hosts_screen(), "permission_granted", boom)
     check = preflight._check_screen_recording_sync()
     assert check.status == STATUS_WARN
 
@@ -390,12 +452,13 @@ def test_the_startup_check_never_takes_a_picture(monkeypatch):
     """Preflight asks the OS a question. It does NOT capture the screen to
     find out -- that would be a screenshot the user never asked for, at every
     boot."""
-    monkeypatch.setattr(jarvis_platform.macos.screen, "permission_granted", lambda: True)
+    screen = _this_hosts_screen()
+    monkeypatch.setattr(screen, "permission_granted", lambda: True)
 
     def forbidden(*a, **k):
         raise AssertionError("preflight captured the screen")
 
-    monkeypatch.setattr(jarvis_platform.macos.screen, "capture", forbidden)
+    monkeypatch.setattr(screen, "capture", forbidden)
     assert preflight._check_screen_recording_sync().status == STATUS_OK
 
 
@@ -671,10 +734,18 @@ def test_spoken_summary_names_a_single_failure():
 
 
 def test_spoken_summary_says_screen_recording_in_words_a_person_would_use():
+    """The spoken phrase names THIS host's gate.
+
+    It said "Screen Recording permission" flat, which is right on a Mac and
+    names a permission that does not exist on Windows -- where the gate is
+    JARVIS's own switch. `screen_recording` stays the check's id and must
+    never be what the user hears either way.
+    """
+    gate = jarvis_platform.current().screen.CAPTURE_GATE
     checks = [Check(name="screen_recording", status=STATUS_FAIL,
-                    message="JARVIS has not been granted Screen Recording.")]
+                    message=f"JARVIS has not been granted {gate.name}.")]
     summary = preflight.spoken_summary(checks)
-    assert "Screen Recording permission" in summary
+    assert f"{gate.name} permission" in summary
     assert "screen_recording" not in summary
 
 

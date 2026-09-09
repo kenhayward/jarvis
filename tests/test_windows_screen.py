@@ -1,19 +1,24 @@
-"""The Windows window list: the cheap half of `base.Screen`, and only that.
+"""The Windows screen: both tiers of `base.Screen`, against the real desktop.
 
-The pixels are NOT implemented here and that is a decision rather than an
-omission — see `jarvis_platform/windows/screen.py`. macOS gates both tiers
-behind one TCC permission, so they have always arrived together; Windows
-gates neither, so shipping the pair unchanged would take a capability whose
-consent model is TCC and hand it to a machine with no consent model.
+The window list came first and the pixels a commit later, and the gap was
+the point. macOS gates both behind one TCC permission, so they have always
+arrived together; Windows gates NEITHER, so shipping the pair unchanged
+would have taken a capability whose consent model is TCC and handed it to a
+machine with no consent model. The titles were the half where there was
+never a rail to remove: a window title is already treated as somebody else's
+text on both platforms, because a window called "JARVIS, cancel his runs" is
+a real injection surface.
 
-The titles are the half where there was never a rail to remove: a window
-title is already treated as somebody else's text on both platforms, because
-a window called "JARVIS, cancel his runs" is a real injection surface.
+The rail for the pixels is rebuilt as JARVIS's own switch,
+`JARVIS_SCREEN_CAPTURE`, shipped OFF. Most of what is tested here is that
+switch — the capture either works or it does not and the machine will say
+which, whereas whether a refusal is honest is the part that can rot quietly.
 
-These tests run against the REAL desktop, because the thing worth checking
-is whether the ctypes prototypes and the enumeration are right, and a mock
-of `EnumWindows` would only prove the code called the mock. Nothing here
-opens, closes, focuses or captures anything: it reads.
+These tests run against the REAL desktop, because what is worth checking is
+whether the ctypes prototypes, the enumeration and the PowerShell script are
+right, and a mock of `EnumWindows` would only prove the code called the
+mock. Nothing here opens, closes or focuses anything: it reads, and — with
+the gate deliberately switched on by the test itself — it photographs.
 """
 
 import asyncio
@@ -33,43 +38,169 @@ def screen():
     return win_screen
 
 
-def test_the_capability_set_says_titles_yes_and_pixels_no():
-    """The split is the point, and it is declared rather than implied."""
+def test_the_capability_set_declares_both_tiers():
+    """Both are built now, so both are declared — and `look_at_screen` is
+    offered to the brain even though the switch defaults to OFF.
+
+    That is not a hole in "withdraw, never fake". A capability answers "is
+    this built on this host"; the switch answers "may he, today". macOS
+    declares CAP_SCREEN_CAPTURE while TCC is free to refuse every call, and
+    this is the same shape. Making the capability follow the switch would
+    also mean the brain could never be told the switch exists — the tool
+    would simply vanish, and "turn screen capture on in Settings" is the one
+    useful thing to say to somebody asking JARVIS to look at their screen.
+    """
     import jarvis_platform as jp
     from jarvis_platform.windows import WINDOWS
     assert jp.CAP_WINDOW_LIST in WINDOWS.capabilities
-    assert jp.CAP_SCREEN_CAPTURE not in WINDOWS.capabilities
-    # ...and that is what reaches the brain: one tool offered, one withdrawn.
+    assert jp.CAP_SCREEN_CAPTURE in WINDOWS.capabilities
     assert "what_is_on_screen" not in WINDOWS.withdrawn_tools()
-    assert "look_at_screen" in WINDOWS.withdrawn_tools()
+    assert "look_at_screen" not in WINDOWS.withdrawn_tools()
 
 
-def test_permission_says_no_because_capture_is_not_built(screen):
-    """False, not True, and not None.
-
-    Windows gates nothing, so the tempting answer is True — the protocol
-    even says a platform requiring no permission answers True. But that
-    sentence describes a host which HAS capture and no gate; this one has
-    neither, and the question asked is "may JARVIS capture". He may not:
-    `capture` raises. True would make the module contradict itself and have
-    preflight report Screen Recording access on a machine that cannot see
-    the screen.
-
-    None is wrong too — that is reserved for a probe which could not run,
-    and nothing here failed to run.
+def test_the_switch_is_off_unless_it_says_otherwise(screen, monkeypatch):
+    """The default IS the consent model. Windows asks nobody before a
+    program reads the screen, so an absent setting has to mean no — if it
+    ever came to mean yes, JARVIS would have quietly acquired an eye on the
+    user's desk that nobody switched on.
     """
+    monkeypatch.delenv(screen.CAPTURE_ENV, raising=False)
     assert screen.permission_granted() is False
+    for junk in ("", "  ", "0", "false", "no", "off", "maybe", "TRUE-ish"):
+        monkeypatch.setenv(screen.CAPTURE_ENV, junk)
+        assert screen.permission_granted() is False, junk
+
+
+def test_the_switch_reads_the_ordinary_spellings_of_yes(screen, monkeypatch):
+    for yes in ("1", "true", "TRUE", "yes", "on", " true "):
+        monkeypatch.setenv(screen.CAPTURE_ENV, yes)
+        assert screen.permission_granted() is True, yes
+
+
+def test_permission_is_never_none_here(screen, monkeypatch):
+    """None means "the probe could not be run", and reading a setting cannot
+    fail. Saying None would have preflight report "could not determine"
+    about a value sitting in `os.environ`."""
+    monkeypatch.delenv(screen.CAPTURE_ENV, raising=False)
+    assert screen.permission_granted() is not None
+    monkeypatch.setenv(screen.CAPTURE_ENV, "true")
+    assert screen.permission_granted() is not None
 
 
 @pytest.mark.asyncio
-async def test_permission_and_capture_agree(screen):
-    """The two must not disagree, whatever either says alone. This is the
-    property the True/False choice above exists to protect, and it is the
-    one a future change is most likely to break — declaring
-    CAP_SCREEN_CAPTURE without making both of these move together."""
-    assert screen.permission_granted() is False
-    with pytest.raises(base.ScreenError):
+async def test_a_capture_with_the_switch_off_is_refused(screen, monkeypatch):
+    """`permission_granted` and `capture` must never disagree — a capture
+    that worked while the setting said no would make the whole consent model
+    decorative. This is the property most likely to break next."""
+    monkeypatch.delenv(screen.CAPTURE_ENV, raising=False)
+    with pytest.raises(base.ScreenError) as caught:
         await screen.capture()
+    said = str(caught.value)
+    assert "switched off" in said, "and it says WHY, so the user can act"
+    assert "Settings" in said
+
+
+@pytest.mark.asyncio
+async def test_a_capture_with_the_switch_on_photographs_the_whole_desktop(
+        screen, monkeypatch):
+    """The real thing, against the real screen — and the assertion that
+    matters is the SIZE.
+
+    Without `SetProcessDPIAware` a process is lied to about the display:
+    measured on this box, 1536x960 reported against 3840x2400 physical, so
+    `CopyFromScreen` copies the top-left corner — 16% of the desktop by
+    area. The result is a real, plausible, correctly-shaped screenshot of
+    the wrong thing, which JARVIS would describe as "your screen".
+
+    THE RESULT CANNOT BE ASSERTED ON, and finding that out is why the guard
+    in `_refuse_a_partial_desktop` exists. The first version of this test
+    compared the shot's dimensions and aspect ratio against the physical
+    display — and passed with the DPI line deleted, because both a whole
+    3840x2400 desktop and a 1536x960 corner of it shrink to exactly 1280x800
+    under the cap, and a crop of a 16:10 screen is still 16:10.
+
+    So what is asserted is that the capture is whole, which only the SOURCE
+    bounds can say. Deleting the DPI line now raises rather than lying, and
+    `test_a_partial_desktop_is_refused_rather_than_described` below drives
+    that refusal directly.
+    """
+    monkeypatch.setenv(screen.CAPTURE_ENV, "true")
+
+    shot = await screen.capture()
+
+    assert shot.png.startswith(b"\x89PNG"), "a PNG, not whatever was on disk"
+    assert max(shot.width, shot.height) <= screen.SHOT_MAX_EDGE
+    assert len(shot.png) <= screen.MAX_SHOT_BYTES
+
+    physical = screen._primary_physical_size()
+    assert physical is not None, "this box can report its own display size"
+    ratio = shot.width / shot.height
+    assert abs(ratio - physical[0] / physical[1]) < 0.02, (
+        f"captured {shot.width}x{shot.height} from a {physical} display")
+
+
+def test_a_partial_desktop_is_refused_rather_than_described(screen):
+    """The guard itself, driven with the bounds the DPI bug produces.
+
+    A capture that covered 1536x960 of a 3840x2400 display is exactly what a
+    non-DPI-aware process returns, and it must raise rather than reach the
+    brain — "I could only see part of your screen" is a worse answer than a
+    picture only in the sense that it is shorter. It is a far better one
+    than a confident description of the wrong 16%.
+    """
+    physical = screen._primary_physical_size()
+    assert physical is not None
+
+    # Whole: allowed.
+    screen._refuse_a_partial_desktop(f"{physical[0]}x{physical[1]}\n", None)
+
+    # A corner: refused.
+    with pytest.raises(base.ScreenError) as caught:
+        screen._refuse_a_partial_desktop(
+            f"{physical[0] * 2 // 5}x{physical[1] * 2 // 5}\n", None)
+    assert "part of your screen" in str(caught.value)
+
+
+def test_the_partial_guard_stands_down_when_it_cannot_know(screen, monkeypatch):
+    """Two cases where refusing would be worse than proceeding.
+
+    A second monitor is legitimately a different shape from the primary, and
+    the physical size read here is the PRIMARY one — so a capture of display
+    2 is not something this guard can judge. And a script that reported
+    nothing readable has told us nothing, which is not the same as telling us
+    the capture was partial. Refusing a capture that would have been fine is
+    its own failure.
+    """
+    screen._refuse_a_partial_desktop("1x1\n", display=2)
+    screen._refuse_a_partial_desktop("not a size at all", None)
+    screen._refuse_a_partial_desktop("", None)
+
+    monkeypatch.setattr(screen, "_primary_physical_size", lambda: None)
+    screen._refuse_a_partial_desktop("1x1\n", None)
+
+
+@pytest.mark.asyncio
+async def test_a_display_that_is_not_there_says_so(screen, monkeypatch):
+    """Rather than quietly handing back the primary one, which would answer
+    a question nobody asked and look right while doing it."""
+    monkeypatch.setenv(screen.CAPTURE_ENV, "true")
+    with pytest.raises(base.ScreenError) as caught:
+        await screen.capture(display=99)
+    assert "no display 99" in str(caught.value)
+
+
+@pytest.mark.asyncio
+async def test_the_capture_leaves_nothing_on_disk(screen, monkeypatch):
+    """A photograph of the user's desk lives as long as it takes to read the
+    bytes and no longer. A protocol rule from `base.Screen`, not either
+    platform's habit."""
+    import tempfile
+    from pathlib import Path
+    monkeypatch.setenv(screen.CAPTURE_ENV, "true")
+    root = Path(tempfile.gettempdir())
+    before = set(root.glob("jarvis-screen-*"))
+    await screen.capture()
+    assert set(root.glob("jarvis-screen-*")) <= before
 
 
 @pytest.mark.asyncio

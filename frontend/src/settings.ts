@@ -24,6 +24,12 @@ interface StatusResponse {
     fish_voice_id: boolean;
     user_name: string;
   };
+  // Whether this host gates capture with a JARVIS setting at all, and where
+  // that setting stands. Two facts, not one: macOS gates capture through
+  // System Settings, so the section stays hidden there rather than drawing a
+  // switch JARVIS does not own.
+  screen_capture_gated: boolean;
+  screen_capture: boolean;
 }
 
 interface PreferencesResponse {
@@ -167,6 +173,28 @@ function buildPanelHTML(): string {
           </div>
         </section>
 
+        <!-- Screen capture. Hidden entirely unless this host is one whose
+             gate is JARVIS's own setting: on macOS Screen Recording lives in
+             System Settings and a toggle here would be a switch that does
+             nothing. Saved on change rather than behind a Save button --
+             revoking must be one click, or the consent model is weaker than
+             the one it replaces. -->
+        <section class="settings-section" id="section-screen" hidden>
+          <h3>Screen</h3>
+
+          <div class="settings-field">
+            <label>
+              <input type="checkbox" id="input-screen-capture" />
+              Let JARVIS see your screen
+            </label>
+            <p class="settings-hint">
+              Off by default. Windows asks nobody before a program reads the
+              screen, so this switch is JARVIS's own. Reading window TITLES
+              needs no permission and is unaffected.
+            </p>
+          </div>
+        </section>
+
         <!-- System Info -->
         <section class="settings-section" id="section-sysinfo">
           <h3>System Info</h3>
@@ -231,6 +259,7 @@ async function loadStatus() {
       status.env_keys_set.fish_audio ? "green" : fishInUse ? "red" : "off");
 
     renderVoiceSection(status);
+    renderScreenSection(status);
 
     // System info
     const portEl = document.getElementById("sysinfo-port");
@@ -260,6 +289,13 @@ async function loadStatus() {
   }
 }
 
+function renderScreenSection(status: StatusResponse) {
+  const section = document.getElementById("section-screen");
+  if (section) section.hidden = !status.screen_capture_gated;
+  const box = document.getElementById("input-screen-capture") as HTMLInputElement | null;
+  if (box) box.checked = status.screen_capture;
+}
+
 async function loadPreferences() {
   try {
     const prefs = await apiGet<PreferencesResponse>("/api/settings/preferences");
@@ -282,6 +318,23 @@ function wireEvents() {
     const chosen = (document.getElementById("input-tts-backend") as HTMLSelectElement).value;
     const status = await apiGet<StatusResponse>("/api/settings/status");
     showVoiceFieldsFor(chosen, status);
+  });
+
+  // Saved the moment it moves, not behind a Save button: revoking has to be
+  // one click. The checkbox is put back from the SERVER's answer afterwards,
+  // so a write that was refused cannot leave the page showing an eye that is
+  // open when it is shut.
+  document.getElementById("input-screen-capture")?.addEventListener("change", async () => {
+    const box = document.getElementById("input-screen-capture") as HTMLInputElement;
+    try {
+      await apiPost("/api/settings/keys", {
+        key_name: "JARVIS_SCREEN_CAPTURE",
+        key_value: box.checked ? "true" : "false",
+      });
+    } catch (e) {
+      console.error("[settings] could not save the screen capture switch:", e);
+    }
+    await loadStatus();
   });
 
   document.getElementById("btn-save-voice")?.addEventListener("click", async () => {
