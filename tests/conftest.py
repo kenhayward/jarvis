@@ -78,6 +78,65 @@ def _never_post_a_real_notification(monkeypatch, request):
 
 
 @pytest.fixture(autouse=True)
+def _no_startup_announcement(request, monkeypatch):
+    """No test may have JARVIS speak at startup.
+
+    `server._run_preflight` speaks whenever a check FAILS, and on any machine
+    without `say` the voice check does fail — so under `TestClient` this fires
+    in most of the suite. It is a fire-and-forget task
+    (`server.py`: `_background.add(task := asyncio.create_task(...))`), and
+    `TestClient` runs the app on ITS OWN THREAD, so the announcement is still
+    in flight while fixtures and test bodies run on the main thread. Measured
+    with a probe on 2026-09-09:
+
+        preflight-start     asyncio-portal-...
+        startup-returned    MainThread
+        speech-is           SpeechScheduler
+        after-first-get     -
+        preflight-end       asyncio-portal-...
+        synth               "3 things need attention, sir: ..."
+
+    It outlives startup AND the first request, and it reaches
+    `_synth_for_speech` for real.
+
+    That is a cross-thread race against any test that touches voice state,
+    and it cost one: `test_voice_settings.py::
+    test_the_status_endpoint_shows_the_fallback`. Its `fallen_back` fixture
+    sets `JARVIS_TTS_BACKEND=piper` and swaps in a fresh `_voice_fallback`
+    dict; the in-flight announcement then reads the now-piper env, gets
+    `say` back, and writes "piper" into that fresh dict before the first
+    assertion reads it. It failed on one Windows CI run and passed on the
+    next of the SAME commit, which is what a race looks like from outside.
+
+    Patched on `preflight` rather than on `server`, because several fixtures
+    `importlib.reload(server)` and would hand the real one back — the same
+    reasoning as the notification rail above. `spoken_summary` rather than
+    `run_checks`, because the harm is the SPEECH: the checks still run, so a
+    test watching what preflight concluded sees exactly what it saw before.
+
+    Two files are exempt, and the second one is a lesson. `test_preflight`
+    tests `spoken_summary` itself. `test_preflight_runs_at_startup` exists
+    to prove the announcement HAPPENS -- preflight was once dead code that
+    nobody called, and an expired login reached the user as "my language
+    systems are down" and nothing else, four restarts running. Silencing it
+    there would delete the guard against exactly that.
+
+    That second file was missed when this rail was written, and the full
+    suite caught it. The search had been for `spoken_summary` -- the
+    function being patched -- and this file never names it: it calls
+    `server._run_preflight()` directly and asserts on a fake `speech`. Search
+    for the BEHAVIOUR a rail suppresses, not for the symbol it patches.
+    Neither exempt file starts a `TestClient`, so neither is the leak this
+    guards against.
+    """
+    if request.module.__name__.endswith(("test_preflight",
+                                         "test_preflight_runs_at_startup")):
+        return
+    import preflight
+    monkeypatch.setattr(preflight, "spoken_summary", lambda checks: "")
+
+
+@pytest.fixture(autouse=True)
 def _never_touch_the_real_projects_folder(monkeypatch, tmp_path):
     """No test may create a directory in the user's real ~/Projects.
 

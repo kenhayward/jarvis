@@ -246,3 +246,31 @@ async def test_the_status_endpoint_shows_the_fallback(client, fallen_back):
     assert c.get("/api/settings/status").json()["tts_fallback_from"] is None
     await server._synth_for_speech("Alpha.")
     assert c.get("/api/settings/status").json()["tts_fallback_from"] == "piper"
+
+
+def test_no_startup_announcement_can_reach_the_voice(client):
+    """The rail the test above needs, pinned where it was needed.
+
+    `server._run_preflight` speaks whenever a check FAILS, and on a machine
+    with no `say` the voice check does. It is fire-and-forget, and
+    `TestClient` runs the app on its own thread, so that announcement is
+    still in flight while these fixtures run on the main thread -- measured
+    reaching `_synth_for_speech` twice, AFTER startup returned and after the
+    first request. `fallen_back` sets JARVIS_TTS_BACKEND=piper and swaps in a
+    fresh `_voice_fallback` dict, so the in-flight announcement could read
+    the now-piper env, get `say` back, and write "piper" into that dict
+    before the assertion above read it.
+
+    It did: one Windows CI run failed on `assert 'piper' is None` and the
+    next run of the SAME commit passed.
+
+    `tests/conftest.py::_no_startup_announcement` closes it by emptying
+    `preflight.spoken_summary`. This fails if that rail is removed, which is
+    the only cheap way to notice -- the flake itself shows up perhaps once in
+    a few hundred runs, and only where a check fails.
+    """
+    import preflight
+    failing = [preflight.Check(name="voice", status=preflight.STATUS_FAIL,
+                               message="no voice", remedy="install one")]
+    assert preflight.spoken_summary(failing) == "", \
+        "the startup announcement rail is not installed"
