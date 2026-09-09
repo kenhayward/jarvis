@@ -11,6 +11,7 @@ exactly what has to move.
 Read `jarvis_platform/windows/secrets.py`'s module docstring first.
 """
 
+import asyncio
 import os
 import stat
 import sys
@@ -105,19 +106,30 @@ def test_windows_terminal_never_posix_quotes(monkeypatch):
     assert not any("'" in part or "\\ " in part for part in argv)
 
 
-def test_windows_terminal_falls_back_to_cmd_with_a_drive_aware_cd(monkeypatch):
-    """`cd` alone does not change drive on Windows; `cd /d` does. Getting
-    this wrong opens a terminal in the wrong place and reports success."""
+def test_the_cmd_fallback_no_longer_composes_a_cd_at_all(monkeypatch):
+    """This replaces a test that asserted the composed `cd /d "<dir>" && ...`
+    line was built correctly. It was — and it never worked, because Python
+    escapes the quotes as \\" and cmd.exe reads that literally. The test
+    passed for four months on a branch nobody had run.
+
+    The directory is the spawn's `cwd` now, so there is no `cd` to get right
+    and no drive to change. See the tests at the bottom of this file for the
+    rule that replaced the string.
+    """
     monkeypatch.setattr(win_launcher.shutil, "which",
                         lambda name: r"C:\cmd.exe" if name == "cmd.exe" else None)
     argv = win_launcher._terminal_argv(r"D:\work\chitauri", "npm test")
-    assert argv == [r"C:\cmd.exe", "/k", r'cd /d "D:\work\chitauri" && npm test']
+    assert argv == [r"C:\cmd.exe", "/k", "npm test"]
+    assert not any("cd /d" in a for a in argv)
 
 
 def test_windows_editor_asks_for_the_cmd_shim_by_its_full_name(monkeypatch):
-    """The Windows VS Code installer puts `code.cmd` on PATH, and a `.cmd`
-    cannot be executed by `create_subprocess_exec` — the other half of the
-    claude-path problem."""
+    """The Windows VS Code installer puts `code.cmd` on PATH — confirmed on
+    a real box. The full name is asked for FIRST so the result does not
+    depend on PATHEXT, which happens to resolve a bare `code` to it as well.
+
+    Not because a `.cmd` cannot be spawned: it can, measured 2026-09-09.
+    See jarvis_platform/windows/launcher.py for what it costs instead."""
     asked = []
     monkeypatch.setattr(win_launcher.shutil, "which",
                         lambda name: asked.append(name) or None)
@@ -535,3 +547,126 @@ def test_the_reset_and_lockdown_really_do_this_to_a_real_file(tmp_path):
     assert win_secrets._dacl_principals(token)[0] == [account.lower()], \
         "one ACE, this user, against the real tool"
     assert token.read_bytes() == b"secret", "and the contents are untouched"
+
+
+# --- the fallback branch, measured on a real box 2026-09-09 ----------------
+#
+# `_terminal_argv`'s cmd.exe branch had never been run. It composed
+#     cd /d "<dir>" && <command>
+# into ONE argv element, and Python's list2cmdline then escaped those quotes
+# as \" — CommandLineToArgvW's convention, which cmd.exe does not share; it
+# has no escape character inside quotes, as this module's own docstring says.
+# Measured: cmd answered "The filename, directory name, or volume label
+# syntax is incorrect.", `cd /d` failed, `&&` short-circuited, the command
+# never ran, and `_spawn` still reported success.
+#
+# The cure is to stop making the directory into text. It travels as the
+# spawn's `cwd`, the way it travels as `-d` on the wt branch, so there is
+# nothing left to quote. The tests below pin the RULE rather than a string.
+
+def _only(name_wanted):
+    return lambda name: rf"C:\{name}" if name == name_wanted else None
+
+
+def test_no_argv_element_the_terminal_is_launched_with_contains_a_quote(monkeypatch):
+    """The root cause, as the rule that prevents it.
+
+    Python escapes an embedded `"` as `\\"` when it builds the command line,
+    and cmd.exe reads `\\"` literally — so any argv element carrying a quote
+    arrives corrupted. Nothing here may contain one.
+    """
+    for which_name in ("wt.exe", "cmd.exe"):
+        monkeypatch.setattr(win_launcher.shutil, "which", _only(which_name))
+        argv = win_launcher._terminal_argv(r"D:\work\a b\c", "npm test")
+        offenders = [a for a in argv if '"' in a]
+        assert not offenders, (
+            f"[{which_name}] these carry a quote Python will escape as "
+            f'\\" and cmd.exe will read literally: {offenders!r}')
+
+
+def test_the_cmd_fallback_does_not_put_the_directory_in_a_shell_line(monkeypatch):
+    """No `cd` at all. The directory is data, not text — same property the
+    wt branch gets from `-d`."""
+    monkeypatch.setattr(win_launcher.shutil, "which", _only("cmd.exe"))
+    argv = win_launcher._terminal_argv(r"D:\work\chitauri", "npm test")
+    assert argv == [r"C:\cmd.exe", "/k", "npm test"]
+    assert not any("cd " in a for a in argv)
+
+
+def test_the_cmd_fallback_with_no_command_is_just_the_shell(monkeypatch):
+    monkeypatch.setattr(win_launcher.shutil, "which", _only("cmd.exe"))
+    assert win_launcher._terminal_argv(r"D:\work\chitauri", "") == [r"C:\cmd.exe"]
+
+
+def _spawn_recorder(monkeypatch):
+    seen = {}
+
+    async def fake_spawn(argv, cwd=None, new_console=False):
+        seen.update(argv=argv, cwd=cwd, new_console=new_console)
+        return True, ""
+
+    monkeypatch.setattr(win_launcher, "_spawn", fake_spawn)
+    return seen
+
+
+def test_terminal_hands_the_directory_to_the_spawn_as_cwd(monkeypatch):
+    """Where the directory actually goes now."""
+    monkeypatch.setattr(win_launcher.shutil, "which", _only("cmd.exe"))
+    seen = _spawn_recorder(monkeypatch)
+    asyncio.run(win_launcher.terminal(cwd=r"D:\work\a b\c", command="npm test"))
+    assert seen["cwd"] == r"D:\work\a b\c"
+
+
+def test_the_cmd_fallback_asks_for_a_console_of_its_own(monkeypatch):
+    """`cmd.exe` spawned the ordinary way is a headless child with its stdio
+    on a pipe — measured, its prompt arrived on the PARENT's pipe. That is
+    not a terminal the user can see or type into, so the fallback must ask
+    for a new console."""
+    monkeypatch.setattr(win_launcher.shutil, "which", _only("cmd.exe"))
+    seen = _spawn_recorder(monkeypatch)
+    asyncio.run(win_launcher.terminal(cwd=r"D:\work\x", command=""))
+    assert seen["new_console"] is True
+
+
+def test_windows_terminal_does_not_ask_for_a_console(monkeypatch):
+    """`wt` draws its own window; a console handed to it would be a stray
+    empty one."""
+    monkeypatch.setattr(win_launcher.shutil, "which", _only("wt.exe"))
+    seen = _spawn_recorder(monkeypatch)
+    asyncio.run(win_launcher.terminal(cwd=r"D:\work\x", command=""))
+    assert seen["new_console"] is False
+
+
+def test_the_wt_branch_is_not_also_given_a_cwd(monkeypatch):
+    """`wt` carries the directory as `-d` already. Handing it `cwd` as well
+    would change nothing except for a directory that does not exist, where
+    the spawn would begin failing on the branch that has always worked —
+    a behaviour change bought for no benefit."""
+    monkeypatch.setattr(win_launcher.shutil, "which", _only("wt.exe"))
+    seen = _spawn_recorder(monkeypatch)
+    asyncio.run(win_launcher.terminal(cwd=r"D:\work\x", command=""))
+    assert seen["cwd"] is None
+    assert seen["argv"] == [r"C:\wt.exe", "-d", r"D:\work\x"]
+
+
+@pytest.mark.asyncio
+async def test_the_new_console_spawn_does_not_pass_a_windows_only_flag_off_windows(monkeypatch):
+    """`creationflags` raises ValueError on POSIX — not an OSError, so it
+    would escape `_spawn`'s handler. And it IS reachable off Windows: the
+    flag is asked for when there is no `wt.exe` on PATH, and there is none
+    on a Mac, where this whole file runs on the macOS gate."""
+    seen = {}
+
+    async def fake_exec(*argv, **kw):
+        seen.update(kw)
+
+        class P:
+            returncode = 0
+        return P()
+
+    monkeypatch.setattr(win_launcher.asyncio, "create_subprocess_exec", fake_exec)
+    monkeypatch.setattr(win_launcher, "_CREATE_NEW_CONSOLE", 0)   # i.e. POSIX
+    ok, err = await win_launcher._spawn(["x"], cwd=None, new_console=True)
+    assert ok, err
+    assert "creationflags" not in seen, (
+        "passed a Windows-only argument on a platform that rejects it")

@@ -35,7 +35,7 @@ job's `continue-on-error`.
   were written from documentation; all three have since been corrected
   against a real machine (see the guess table).
 - **The Windows box has been live since 2026-09-08** and the suite runs on
-  it. **It is GREEN as of 2026-09-09** (2489 passed, 78 skipped, 10
+  it. **It is GREEN as of 2026-09-09** (2512 passed, 78 skipped, 10
   deselected, ~4min). Measured on a second, fresh Windows checkout that day
   with Python **3.13** — note `py -3.12` does not resolve on that box (`py`
   answers 3.14, PATH answers 3.13), so the venv was built from
@@ -65,9 +65,10 @@ job's `continue-on-error`.
 
 ## What is left
 
-Two things, neither of them code. Item 1 below is kept as the record of how
-the third was answered, because its premise was wrong for months and the
-correction is the useful part.
+**Nothing, on this machine.** All three entries below are now the record
+rather than the task: two were answered by measurement and the third is
+deliberately deferred. Each premise that turned out to be wrong is kept,
+because the corrections are the useful part.
 
 ### 1. ~~Spawning `claude.cmd`~~ — **DONE 2026-09-09. It was not a spawn bug.**
 
@@ -125,20 +126,66 @@ subprocess seam, and the one existing assertion that touched this
 (`"--append-system-prompt" in joined`) was a substring test that kept passing
 on the new flag's own prefix.
 
-### 2. The last unverified guess: `wt` / `cmd.exe` argv
+### 2. ~~The last unverified guess: `wt` / `cmd.exe` argv~~ — **DONE 2026-09-09.**
 
-The guess table below has one row still at "not yet run" —
-`windows/launcher.py::_terminal_argv`. There is partial evidence and it is
-worth knowing: a broken test really did drive this path for four days,
-producing a visible Windows error dialog per suite run
-("Could not access starting directory ..."). So the argv reaches a real
-terminal and fails loudly on a bad directory. What has never been seen is a
-SUCCESSFUL open. Point `open_in_terminal` at a real project and look.
+Driven on a real box through the production launcher, against a directory
+with a SPACE in it on a DIFFERENT DRIVE from the process, with the terminal
+made to report the directory it actually landed in rather than being glanced
+at.
 
-### 3. Drop `continue-on-error` from the Windows CI job
+**The `wt` branch was correct as written.** It opens where it is told;
+`wt -d` needs no quoting because the directory is its own argv entry.
 
-Nothing is known to fail there. See the state section for why this wants a
-clean run or two first rather than being done on a prediction.
+**The `cmd.exe` fallback had never worked, and could not have.** It composed
+`cd /d "<dir>" && <command>` into ONE argv element, and Python's
+`list2cmdline` escapes an embedded `"` as `\"` — CommandLineToArgvW's
+convention, not cmd.exe's, which has no escape character inside quotes. That
+is what `_terminal_argv`'s own docstring had said all along, four lines above
+the code that depended on it. Measured:
+
+    The filename, directory name, or volume label syntax is incorrect.
+
+`cd /d` failed, `&&` short-circuited so the command never ran, and `_spawn`
+reported `success: True` throughout. A second defect sat underneath it:
+`cmd.exe` spawned through `_spawn`'s pipes is a HEADLESS child — its prompt
+arrived on the parent's pipe — so even with the quoting right the user got no
+window.
+
+Both are fixed. The directory now travels as the spawn's `cwd` on that branch,
+the way it travels as `-d` on the other, so there is nothing left to quote;
+and the fallback asks for `CREATE_NEW_CONSOLE` with no pipes and no wait
+(`cmd /k` never exits, so waiting would have blocked for LAUNCH_TIMEOUT on
+every terminal the user opened). Verified after the fix: both branches land in
+the right directory, and the console is really on screen.
+
+**The `cd /d` question this document raised is retired rather than answered.**
+With no `cd` there is no drive to change — the OS sets the directory before
+the shell starts.
+
+Two things worth carrying forward:
+
+* **The test pinned the string, not the behaviour.**
+  `test_windows_terminal_falls_back_to_cmd_with_a_drive_aware_cd` asserted
+  that the composed line was built correctly. It was. It also never worked,
+  and the test passed the whole time. The replacement pins the RULE — no argv
+  element may carry a quote — which is the same move made for the brain's
+  newline.
+* **On Windows 11 the fallback still looks like Windows Terminal.** A
+  `CREATE_NEW_CONSOLE` console is hosted by whatever the box's default
+  terminal application is, so it appears as a WT *tab*. That also made two
+  measurements here inconclusive before one keyed on the window TITLE
+  succeeded: counting `cmd.exe` windows finds nothing, because there is no
+  such window.
+
+### 3. Drop `continue-on-error` from the Windows CI job — **DEFERRED, on purpose**
+
+Nothing is known to fail there, and it is still staying for now. **Decided
+2026-09-09: it comes off after phase 4, once there is a complete stable
+Windows build** — not before. While this project is two people and the
+Windows leg is still moving under the port, an amber gate keeps iteration
+fast and an honest amber is better than a gate that reddens intermittently.
+
+That is a decision, not an oversight. Do not remove it as a tidy-up.
 
 Not phase 3, and the actual next phase: **server-side speech recognition**
 (phase 4). `frontend/src/voice.ts` uses Chrome's `webkitSpeechRecognition`,
@@ -362,7 +409,7 @@ The guesses are isolated so a real box corrects each in one place:
 | what `icacls <path>` prints | `windows/secrets.py::_parse_aces` | `_ICACLS_OURS`, `_ICACLS_INHERITED` | **confirmed** 2026-09-08, one correction |
 | what `whoami /user /fo csv /nh` prints | `windows/secrets.py::_parse_whoami` | `_WHOAMI_SAMPLE` | **confirmed** 2026-09-08, exact |
 | the toast AUMID | `windows/notifications.py::_AUMID` | nothing — it fails silently, see below | **confirmed** 2026-09-08 — real toasts seen on screen |
-| `wt` / `cmd.exe` argv | `windows/launcher.py::_terminal_argv` | `tests/test_windows_platform.py` | **partly** — seen to reach a real terminal and fail loudly on a bad directory; a successful open never observed |
+| `wt` / `cmd.exe` argv | `windows/launcher.py::_terminal_argv` | `tests/test_windows_platform.py` | **confirmed** 2026-09-09 — `wt` branch correct as written; the cmd.exe fallback was BROKEN and is fixed |
 | PowerShell + System.Drawing capture | `windows/screen.py::_CAPTURE_PS1` | `tests/test_windows_screen.py` | **confirmed** 2026-09-09, one correction (DPI) |
 | `EnumWindows` / `QueryFullProcessImageNameW` | `windows/screen.py::_enumerate` | `tests/test_windows_screen.py` | **confirmed** — reads the real desktop |
 

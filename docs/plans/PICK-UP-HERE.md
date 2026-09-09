@@ -4,8 +4,9 @@ Paste the block below into a fresh Claude Code session in this repository.
 Everything in it is checkable against the repo — if a claim here disagrees
 with the code, trust the code and fix this file.
 
-Last updated 2026-09-09, at the end of the Windows session that verified and
-fixed the `claude.cmd` item — the last piece of phase 3 code.
+Last updated 2026-09-09, at the end of the Windows session that closed the
+last two phase 3 items — `claude.cmd` and the terminal launcher. Both were
+"verify a guess" tasks, and both guesses were wrong in the same direction.
 
 ---
 
@@ -17,7 +18,7 @@ docs/plans/cross-platform-port.md for why the phases are ordered as they
 are. CLAUDE.md is the standing guidance for the repo.
 
 Where things stand: PHASE 3'S CODE IS DONE. Windows runs the same suite
-green on a real box (2489 passed, 78 skipped) and withdraws exactly one
+green on a real box (2512 passed, 78 skipped) and withdraws exactly one
 tool (answer_dialog, permanently and by decision). The platform layer
 (jarvis_platform/) is the only place that knows what a machine can do.
 
@@ -33,19 +34,27 @@ of the system prompt on any npm install, silently, while run_executor.py
 fix, cmd.exe /c at the call sites, damages the argument identically. The
 prompt now travels as a file. Nobody had measured any of it.
 
-Two things are left, NEITHER of them code:
-- windows/launcher.py::_terminal_argv is the last unverified guess in the
-  handoff's table — a successful terminal open has never actually been
-  seen. Point open_in_terminal at a real project and look.
-- The Windows CI job still carries continue-on-error. Nothing is known to
-  fail there, so it's ready to come off as its own change once a run or
-  two is clean. Check the JOB, not the run's conclusion: a green tick can
-  hold a red Windows leg inside it.
+The launcher was the same story, found the same way. _terminal_argv's wt
+branch was correct as written, and its cmd.exe fallback had NEVER worked:
+it composed `cd /d "<dir>" && <cmd>` into one argv element, and Python
+escapes those quotes as \" — CommandLineToArgvW's convention, not
+cmd.exe's, which has no escape character inside quotes. The function's own
+docstring said so four lines above the code that relied on it. cd failed,
+&& short-circuited, the command never ran, and _spawn reported success.
+Underneath that, cmd.exe spawned through _spawn's pipes was headless, so
+the user got no window either. Both fixed; both verified on the box.
 
-After those, phase 3 closes and the next real work is phase 4:
-server-side speech recognition. See cross-platform-port.md — it is the
-blocker for Electron and it improves macOS at the same time by retiring
-the echo heuristics in speech.py.
+NOTHING is left on this machine. The one open item is deliberate: the
+Windows CI job keeps continue-on-error until after phase 4, when there is
+a complete stable Windows build. That is a decision (2026-09-09), taken
+because an honest amber gate keeps iteration fast while the port is still
+moving. DO NOT remove it as a tidy-up. When the time comes, check the JOB
+and not the run's conclusion — a green tick can hold a red Windows leg
+inside it.
+
+So the next real work is phase 4: server-side speech recognition. See
+cross-platform-port.md — it is the blocker for Electron and it improves
+macOS at the same time by retiring the echo heuristics in speech.py.
 
 Some ground rules this port has been run under, which matter more than usual
 here:
@@ -63,9 +72,13 @@ here:
   (jarvis_platform.fake.fake_host), never patch jarvis_platform.macos.* by
   name. That mistake has been made three times in this repo and hides until
   the suite runs off macOS.
-- Beware assertions that pass on a substring. `"--append-system-prompt" in
-  joined` kept passing after the flag became --append-system-prompt-file,
-  asserting nothing. Membership in the argv LIST, not `in` a joined string.
+- Beware tests that pass without testing anything. Two were found in one
+  day. `"--append-system-prompt" in joined` kept passing after the flag
+  became --append-system-prompt-file, because the new flag contains the old
+  one as a prefix. And the launcher's fallback test asserted that a
+  composed shell line was built correctly — it was, and it had never
+  worked. Pin the RULE, not the string: "no argv element contains a
+  newline", "no argv element contains a quote".
 - Run the full suite (bare `pytest`, no flags) before pushing, and the
   frontend gates (cd frontend && npx tsc --noEmit && npm run build) if you
   touch frontend/.
@@ -99,14 +112,13 @@ Two corrections to the handoff's setup section, from doing it again on
 - **`py -3.12` may not resolve at all.** On this box `py` answers 3.14 and
   PATH answers 3.13; there is no 3.12. Build the venv from an absolute
   path — `C:\Program Files\Python313\python.exe` — and 3.13 runs the suite
-  clean (2489 passed).
+  clean (2512 passed).
 - The repo now HAS a `.gitattributes` pinning `* text=auto eol=lf`, so the
   CRLF hazard the handoff warns about is closed. Read that file's comment
   before touching it; the template hashes depend on it.
 
 ## What NOT to do
 
-- Do not remove `continue-on-error` from the Windows CI job on a prediction.
 - Do not relax `windows/secrets.py`'s DACL check to accept SYSTEM and
   Administrators. It was considered and rejected; the handoff says why.
 - Do not "fix" `tests/conftest.py`'s notification rail by narrowing it back
@@ -115,3 +127,8 @@ Two corrections to the handoff's setup section, from doing it again on
 - Do not move the brain's launch prompt back into argv, and do not "simplify"
   it by dropping the per-generation filename — a rotation holds the
   predecessor alive while the successor spawns.
+- Do not put a directory back into a cmd.exe command line. It travels as the
+  spawn's `cwd` now, on both launcher branches, and that is what makes the
+  quoting question go away rather than get answered.
+- Do not remove `continue-on-error` from the Windows CI job — see above, it
+  is deferred on purpose until after phase 4.

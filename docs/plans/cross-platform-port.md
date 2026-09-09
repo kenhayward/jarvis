@@ -12,7 +12,7 @@ live working reference while the work spans two machines.
 | 0 | Spikes — measure, decide, no production code | Mac + Windows | partly done, the Windows half outstanding |
 | 1 | Portability hygiene + a failing Windows CI job | Mac | **merged** (PR #3) |
 | 2 | The platform layer, macOS only | Mac | **merged** (PR #4) |
-| 3 | `jarvis_platform/windows/` — first Windows build | Windows | **in progress** |
+| 3 | `jarvis_platform/windows/` — first Windows build | Windows | **code complete** 2026-09-09; CI gate deferred to after phase 4 |
 | 4 | The speech sidecar | Mac, verified on Windows | not started |
 | 5 | Electron shell, macOS first | Mac | not started |
 | 6 | Windows packaging and release | Windows | not started |
@@ -67,12 +67,30 @@ signal for acoustic echo cancellation.
 
 ## Phase 3 — what is left
 
-**No code.** What remains is one unverified guess (`_terminal_argv`) and
-taking `continue-on-error` off the Windows CI job. The rest of this section
-is the record of how the items were answered;
+**Nothing on the Windows machine.** Both remaining items were answered by
+measurement on 2026-09-09, and the one thing still outstanding —
+`continue-on-error` on the Windows CI job — is **deferred on purpose** until
+after phase 4, when there is a complete stable Windows build. The rest of this
+section is the record of how the items were answered;
 `docs/plans/windows-handoff.md` is the live document.
 
-Answered, and each in the same commit as its implementation:
+Both of the last two items were "verify a guess" tasks, and **both guesses
+were wrong in the same direction**: a belief about Windows that had never been
+measured, carried in a docstring, and relied on by code and by a test that
+passed without testing it. That is the phase 3 lesson, more than any
+individual fix.
+
+Answered:
+
+- ~~**The terminal launcher.**~~ **ANSWERED AND FIXED 2026-09-09.**
+  `_terminal_argv`'s `wt` branch was correct as written — verified opening at
+  a directory with a space in it, across a drive change. Its cmd.exe fallback
+  had never been run and did not work: the composed `cd /d "<dir>" && <cmd>`
+  went into one argv element, Python escaped the quotes as `\"`, and cmd.exe
+  reads that literally. Beneath it, `cmd.exe` through `_spawn`'s pipes was
+  headless, so there was no window either. The directory now travels as the
+  spawn's `cwd` on both branches, which retires the `cd /d` question rather
+  than answering it.
 
 - ~~**Spawning `claude.cmd`.**~~ **ANSWERED AND FIXED 2026-09-09, and the
   premise was wrong.** `create_subprocess_exec` **can** run a `.cmd` —
