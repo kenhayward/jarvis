@@ -220,9 +220,19 @@ async def test_every_subprocess_is_time_boxed(runner):
 
 @pytest.mark.asyncio
 async def test_a_stalled_subprocess_is_killed_and_reported():
-    """The real `_run`, against a real process that will not finish."""
+    """The real `_run`, against a real process that will not finish.
+
+    The stalling process is this interpreter rather than `/bin/sleep`, which
+    exists only on POSIX — off there the spawn failed outright and `_run`
+    reported "cannot find the file specified", so the test passed judgement
+    on a process that never started rather than on one that would not stop.
+    `sys.executable` is a real process that genuinely hangs, on any machine
+    that can run this suite at all, and the timeout under test is ordinary
+    asyncio with nothing platform-specific in it.
+    """
     rc, _out, err = await asyncio.wait_for(
-        real_screen._run("/bin/sleep", "30", timeout=0.2), 5)
+        real_screen._run(sys.executable, "-c", "import time; time.sleep(30)",
+                         timeout=0.2), 5)
     assert rc == -1
     assert "timed out" in err
 

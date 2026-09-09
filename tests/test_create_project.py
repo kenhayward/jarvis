@@ -196,7 +196,7 @@ def test_containment_is_proved_by_resolving_not_by_string_matching(tmp_path):
             project_maker.target_for(bad, root)
 
 
-def test_a_symlinked_root_still_compares_equal(tmp_path):
+def test_a_symlinked_root_still_compares_equal(tmp_path, needs_symlinks):
     """A symlink anywhere in the root's own path resolves on both sides, so
     it cannot make the containment check fail for a legitimate name."""
     real = tmp_path / "real-projects"

@@ -76,13 +76,14 @@ class Harness:
         from speech import SpeechScheduler
         self.msgs = []
         self.fail_texts = set()
+        self.synth_delays = {}         # text -> seconds, for tests that need an order
         self.synth_calls = []          # every text actually sent to TTS
         self.sched = SpeechScheduler(self.synth, self.emit, pause_after=0.2, stale_after=0.6,
                                      echo_window=0.5, batch_interval=0.3, batch_settle=0.05, **kw)
 
     async def synth(self, text):
         self.synth_calls.append(text)
-        await asyncio.sleep(0.01)
+        await asyncio.sleep(self.synth_delays.get(text, 0.01))
         if text in self.fail_texts:
             return None
         return b"A:" + text.encode()
@@ -110,6 +111,23 @@ class Harness:
             if m["type"] == "audio" and m["utt"] == utt_id and m["idx"] == idx and not m.get("_dropped"):
                 m["_acked"] = True
         await self.sched.played(utt_id, idx)
+
+    async def until(self, predicate, timeout=5.0, what="the condition"):
+        """Wait for something to become true, rather than for a fixed time.
+
+        A bare `await asyncio.sleep(0.15)` states a guess about how long the
+        scheduler needs, and the guess is wrong on a machine slower or busier
+        than the one it was written on — the failure then arrives as an
+        assertion about `played` rather than as "nothing had been sent yet",
+        which is what it actually means. This waits for the state the test is
+        really about and fails saying so.
+        """
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if predicate():
+                return
+            await asyncio.sleep(0.01)
+        raise AssertionError(f"timed out waiting for {what}")
 
     async def ack_all(self, rounds=10):
         """Ack every audio message the client would have played, in order."""
@@ -751,8 +769,20 @@ async def test_a_raising_transport_abandons_the_utterance_instead_of_wedging():
 async def test_voice_failing_notice_arrives_in_order(h):
     s = h.sched
     h.fail_texts.update({"One.", "Two.", "Three."})
+    # "Three in a ROW" is counted in the order syntheses COMPLETE, and
+    # `_synthesize` is spawned per chunk rather than awaited — so all four run
+    # at once and the order is the event loop's to choose. Every chunk slept
+    # the same 0.01s, which on a loop whose timer granularity is coarser than
+    # that (Windows, ~15 ms) lets "Four." land in the same tick as the
+    # failures: it succeeds, `_tts_failures` resets to 0, and the notice is
+    # never armed. Failed 5 runs out of 5 here, and this is a strong
+    # candidate for the intermittent red on the macOS leg too.
+    #
+    # Holding the one SUCCESS back states the ordering the test always meant,
+    # rather than inheriting it from whichever loop is underneath.
+    h.synth_delays["Four."] = 0.12
     await s.say("One. Two. Three. Four.")
-    await asyncio.sleep(0.2)
+    await asyncio.sleep(0.4)
     await h.ack_all(rounds=3)
     texts = [m.get("text") for m in h.msgs if m["type"] in ("text", "audio")]
     assert texts == ["One.", "Two.", "Three.", "My voice is failing, sir.", "Four."]
@@ -1438,7 +1468,12 @@ async def test_out_of_order_and_duplicate_acks_are_still_ignored(h):
     """Unchanged behaviour, pinned so the new bound cannot regress it."""
     s = h.sched
     u = await s.say("Alpha one. Bravo two. Charlie three.")
-    await asyncio.sleep(0.15)
+    # Waited for, not slept through. This failed on the macOS CI leg with
+    # `played=-1, sent=-1, closed=True` — nothing had been SENT when the acks
+    # arrived, because 0.15s was a guess about how long three syntheses take
+    # and a loaded runner took longer. The same SHA passed on a second run,
+    # which is the signature of a timing assumption rather than a defect.
+    await h.until(lambda: u.sent >= 1, what="chunk 1 to be sent")
     await s.played(u.id, 1)
     await s.played(u.id, 0)          # late, lower
     await s.played(u.id, -5)         # nonsense, lower

@@ -312,7 +312,8 @@ def test_a_file_outside_the_two_document_directories_is_refused(project):
         str(root), "docs/superpowers/scratch.md") is None
 
 
-def test_a_symlink_pointing_out_of_the_project_is_refused(project):
+def test_a_symlink_pointing_out_of_the_project_is_refused(project,
+                                                          needs_symlinks):
     root, _ = project
     outside = root.parent / "outside.md"
     outside.write_text("secret", encoding="utf-8")

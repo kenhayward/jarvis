@@ -233,8 +233,8 @@ async def test_a_traversal_out_of_a_project_is_refused(ready, tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_a_symlink_pointing_out_of_the_project_is_refused(ready,
-                                                                tmp_path):
+async def test_a_symlink_pointing_out_of_the_project_is_refused(
+        ready, tmp_path, needs_symlinks):
     """Containment is proved by resolving both sides — a string check alone
     has never been enough."""
     server, fake, project = ready
