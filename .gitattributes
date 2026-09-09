@@ -1,0 +1,20 @@
+# Line endings are part of this project's correctness, not a matter of taste.
+#
+# `data_paths._sync_template` decides whether a shipped file is still JARVIS's
+# or has become the user's by HASHING it, and `KNOWN_TEMPLATE_HASHES` /
+# `KNOWN_CONNECTIONS_HASHES` pin every version ever shipped. Those hashes are
+# over LF, because git stores blobs normalised — so a working tree that is
+# CRLF does not match its own repository, and anything that reads those bytes
+# rather than the text gets a value that can never occur in production.
+#
+# That is not hypothetical. On a Windows checkout `core.autocrlf` is true by
+# default, 188 of 192 tracked files arrived CRLF, and the test that enforces
+# "every template this project has shipped is listed" reported the live
+# template as unlisted. `_write_atomically` had to be pinned to LF for the
+# same reason: it wrote through text mode, so the bytes on disk were never
+# the bytes that had been hashed and every persona update was refused.
+#
+# eol=lf rather than plain `text=auto`: `auto` still hands Windows CRLF on
+# checkout, which is the state that caused all of the above. Nothing tracked
+# here needs CRLF — there is no .bat, .cmd or .ps1 in the repository.
+* text=auto eol=lf

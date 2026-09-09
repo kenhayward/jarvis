@@ -50,7 +50,21 @@ def _never_post_a_real_notification(monkeypatch, request):
     implementation that cannot run here is patched anyway, at no cost, and
     the rail cannot rot the next time a host is added.
     """
-    if request.module.__name__.endswith("test_notifier"):
+    # Two files are exempt, and for one reason: they test `notify` ITSELF and
+    # mock its own subprocess boundary, so patching it out from under them
+    # replaces the thing under test with an assertion.
+    #
+    # `test_windows_platform` joined `test_notifier` the moment this rail
+    # started patching every implementation rather than only the macOS one.
+    # That change was right — it closed a hole where the rail was inert off
+    # macOS — but it broke a test that calls `windows.notifications.notify`
+    # directly to prove it answers False rather than raising when it cannot
+    # post. On macOS that call is safe (`available()` is False there, so
+    # nothing is ever spawned) and the rail turned it into the very failure
+    # it exists to prevent. Caught by the macOS CI leg, which is the only
+    # place it could be caught.
+    if request.module.__name__.endswith(("test_notifier",
+                                         "test_windows_platform")):
         return
     from jarvis_platform.macos import notifications as macos_notifier
     from jarvis_platform.windows import notifications as windows_notifier

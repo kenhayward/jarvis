@@ -365,6 +365,7 @@ def test_screen_recording_not_granted_is_fail_with_the_launching_app_remedy(monk
     assert "launched" in check.remedy.lower()
 
 
+@_needs_screen_capture
 def test_screen_recording_undeterminable_is_warn_not_fail(monkeypatch):
     """None means the probe could not run -- off macOS, or a macOS that moved
     the symbol. Reporting that as a missing permission would send the user to
@@ -374,6 +375,7 @@ def test_screen_recording_undeterminable_is_warn_not_fail(monkeypatch):
     assert check.status == STATUS_WARN
 
 
+@_needs_screen_capture
 def test_screen_recording_check_never_raises(monkeypatch):
     def boom():
         raise RuntimeError("CoreGraphics went sideways")
