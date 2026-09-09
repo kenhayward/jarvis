@@ -1318,10 +1318,17 @@ def test_open_in_terminal_never_speaks_a_hostile_directory_name(server, monkeypa
         {"name": "notes" + HOSTILE, "path": "/Users/e/Projects/notes"}])
     import asyncio
 
-    async def _opened(*a, **k):
-        return {"success": True}
-    from jarvis_platform.macos import launcher
-    monkeypatch.setattr(launcher, "terminal", _opened)
+    class _Launcher:
+        async def terminal(self, *a, **k):
+            return {"success": True}
+
+    # Substitute the HOST, not `jarvis_platform.macos.launcher`: naming the
+    # macOS module left the real launcher of whatever machine this is in
+    # place, and `tool_open_in_terminal` then really opened a terminal at a
+    # /Users path that does not exist off a Mac.
+    import jarvis_platform as jp
+    from jarvis_platform.fake import fake_host
+    monkeypatch.setattr(jp, "_HOST", fake_host(launcher=_Launcher()))
     out = asyncio.run(server.tool_open_in_terminal({"project": "notes"}))
     assert_header_is_jarviss_own(out)
     assert MARKER not in out
