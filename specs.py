@@ -411,6 +411,20 @@ def _document_meta(project_path: str, path: Path, kind: str) -> dict | None:
         "kind": kind,
         "title": parsed.title or path.stem,
         "modified": modified,
+        # A digest of the CONTENT, because the modification time is not a
+        # reliable answer to "has this changed". Windows file timestamps are
+        # coarse — measured on a real box, ten files written one after another
+        # shared a single identical `st_mtime` — so an edit landing in the
+        # same tick as the previous write is invisible to anything comparing
+        # mtimes. `server._specs_fingerprint` was doing exactly that, and the
+        # SPECS tab therefore missed such an edit entirely.
+        #
+        # Free, near enough: the text is already read and parsed above, so
+        # this is a hash over bytes in hand rather than another trip to disk.
+        # Exact where a size would not be — an edit that replaces one word
+        # with another of the same length changes this and changes nothing
+        # else on the page.
+        "digest": hashlib.sha256(text.encode("utf-8")).hexdigest()[:16],
         "sections": len(parsed.sections),
         "approval": approval_of(project_path, relative, text),
         "progress": _progress_of(text) if kind == "plan" else None,

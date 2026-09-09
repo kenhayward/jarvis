@@ -2252,12 +2252,29 @@ SPECS_POLL_DEFAULT = 2.0
 def _specs_fingerprint() -> str:
     """What the page is currently showing, reduced to a comparable string.
 
-    Paths, modification times, approval states and task counts — everything
+    Paths, content digests, approval states and task counts — everything
     that would change what is on screen, and nothing that would not.
 
     The project's DIRECTORY is part of it, not just its name: a project with
     a worktree appears under one name twice, and without the directory a
     change in one copy is indistinguishable from no change at all.
+
+    The document's DIGEST is part of it, and the modification time is not.
+    That was the other way round, and it made this blind to an edit whose
+    mtime did not move: Windows file timestamps are coarse enough that ten
+    files written one after another share a single `st_mtime` — measured —
+    so a save landing in the same tick as the previous one changed the
+    document and not the fingerprint, and the SPECS tab never heard. The
+    digest is computed in `specs._document_meta` from text it has already
+    read, so this costs nothing extra and answers the actual question.
+
+    Dropping the mtime from each part rather than keeping both is
+    deliberate, but it does NOT make this blind to time — and the difference
+    is worth being exact about. `list_documents` orders newest first, and
+    these parts are joined in that order, so a touch that moves a document
+    up or down the list still changes the fingerprint. That is correct: the
+    order is what the page shows. What is gone is the spurious change from a
+    time moving while both the content and the position stayed put.
     """
     parts: list[str] = []
     for project in _specs_projects():
@@ -2265,7 +2282,7 @@ def _specs_fingerprint() -> str:
             progress = doc["progress"] or {}
             parts.append("|".join((
                 project["name"], project["path"], doc["path"],
-                f"{doc['modified']:.3f}",
+                doc["digest"],
                 doc["approval"]["state"],
                 f"{progress.get('done', '')}/{progress.get('total', '')}")))
     return "\n".join(parts)
