@@ -311,11 +311,51 @@ gets built at all.
   rather than writing a wrapper for a case the native install avoids.
   (Watch for the two shadowing each other on PATH — the native one wins,
   so an `npm install -g` "upgrade" can leave the older binary in charge.)
-- **pid → console window.** Is there any mechanism that maps a Claude Code
-  pid to a specific console window with the certainty a tty gives? If not,
-  `answer_dialog` stays a macOS capability and `CAP_DIALOG_KEY` is never
-  declared here. That is a defensible answer for a tool that sends synthetic
-  keystrokes.
+- ~~**pid → console window.**~~ **ANSWERED 2026-09-09: no.** Enumerated the
+  visible windows on a live box while 13 `claude.exe` processes were running:
+
+      hwnd=919584     owner pid=47144  WindowsTerminal.exe  'Windows PowerShell'
+      hwnd=2162888    owner pid=47144  WindowsTerminal.exe  'Windows PowerShell'
+      hwnd=10750584   owner pid=47144  WindowsTerminal.exe  'Windows PowerShell'
+      hwnd=396918     owner pid=47144  WindowsTerminal.exe  'Windows PowerShell'
+
+  Thirteen candidate target pids; ONE owning pid across four window handles,
+  every title identical. A window's owner is the terminal HOST, not the
+  session inside it — Windows Terminal draws many tabs in one window and
+  console attachment goes through ConPTY, which no pid maps onto. There is
+  no function here from a `claude.exe` pid to a specific window.
+
+  The only remaining route is focus-based input, which `base.Dialogs` forbids
+  in as many words: "must find its target by identity, never by focus —
+  aimed wrong, this types into whatever the user is actually working in".
+
+  So `CAP_DIALOG_KEY` stays absent, permanently, and that is the answer the
+  plan already called defensible rather than a gap to close.
+
+## What the four withdrawn tools are worth building, in order
+
+All four spikes are now answered, so this is a ranking rather than an open
+question. Agreed 2026-09-09, to be picked up after the test cleanup.
+
+1. **`steer_session` — build it.** Best capability per unit of effort of the
+   three that remain. `AF_UNIX` does not exist here, but Claude Code
+   publishes a real named pipe (`\\.\pipe\LOCAL\cc-msg-…`, measured, and
+   enumerable without disturbing it — see `session_watch._inbox_exists`), and
+   a named-pipe transport is ordinary Windows I/O. It restores most of the
+   "notice a stuck session and unblock it" loop on its own: steering covers
+   everything except a session wedged behind a permission prompt.
+2. **`look_at_screen` / `what_is_on_screen` — a DECISION, not an obstacle.**
+   The capture itself is easy. What is unresolved is consent: macOS gates
+   these behind TCC and Windows asks nobody, so shipping them unchanged
+   removes a safety rail rather than porting it. Do not build these until
+   that model is chosen.
+3. **`answer_dialog` — write it off.** See the spike above.
+
+Worth stating plainly what the current state costs, because it is the whole
+of the difference: on Windows JARVIS OBSERVES BUT CANNOT INTERVENE. The
+roster, the "needs a human hand" detection and the toast that announces it
+all work. What is missing is the acting half — he can tell you a session is
+stuck and cannot answer it for you. 30 of the 34 tools are unaffected.
 
 ## What can still be done on the Mac in parallel
 

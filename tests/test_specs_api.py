@@ -16,6 +16,7 @@ outside tmp_path.
 """
 
 import importlib
+import os
 import sys
 import threading
 from pathlib import Path
@@ -65,8 +66,21 @@ def wired(monkeypatch, tmp_path):
     root = tmp_path / "claude-browser"
     root.mkdir()
     relative = builds.write_spec(str(root), SPEC_BODY)
-    (root / builds.PLAN_DIR / "2026-09-03-plan.md").write_text(
-        PLAN, encoding="utf-8")
+    plan = root / builds.PLAN_DIR / "2026-09-03-plan.md"
+    plan.write_text(PLAN, encoding="utf-8")
+    # The plan is made explicitly NEWER than the spec, rather than merely
+    # written second. `list_documents` orders on mtime, and these two land in
+    # the same instant — measured on Windows, ten files written back to back
+    # shared one identical `st_mtime`, every pair of them. With the values
+    # equal the sort is stable and falls back to the order the directories
+    # are walked in, which puts the spec first and makes "the newest
+    # document" mean whichever the filesystem could not tell apart.
+    #
+    # Real specs and plans are written minutes or days apart, so this is the
+    # test asking for an ordering it never established rather than a defect
+    # in the ordering itself.
+    spec_mtime = (root / relative).stat().st_mtime
+    os.utime(plan, (spec_mtime + 10, spec_mtime + 10))
 
     server.cached_projects = [
         {"name": "claude-browser", "path": str(root), "branch": "main"}]

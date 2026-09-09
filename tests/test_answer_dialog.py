@@ -14,7 +14,9 @@ import time
 
 import pytest
 
+import jarvis_platform as jp
 from jarvis_platform import base
+from jarvis_platform.fake import fake_host
 from jarvis_platform.macos import dialogs as dialog
 
 
@@ -329,6 +331,22 @@ def wired(monkeypatch, tmp_path):
         raise AssertionError("no test may run osascript")
     monkeypatch.setattr(dialog, "_osascript", never)
     monkeypatch.setattr(dialog, "_terminal_is_running", lambda: False)
+    # A host that HAS this capability, installed rather than assumed.
+    #
+    # `answer_dialog` is withdrawn on any platform that cannot aim a
+    # keystroke by identity, and on such a machine `current().dialogs` is the
+    # null object: `terminal_of` answers None and every test below stops at
+    # `dialog:no_tty`, long before the behaviour it was written to check.
+    # That is the platform layer working exactly as intended — and it left
+    # seventeen tests asserting a refusal rather than the read-back, the
+    # cancel window and the audit rows they are named for.
+    #
+    # What those seventeen actually cover is `server`'s side of the feature,
+    # which is platform-neutral; the macOS module underneath is mocked at
+    # `_osascript` by the two lines above and never runs anything. So the
+    # host declares the capability and carries that mocked module, and the
+    # file tests what it says it tests on every machine.
+    monkeypatch.setattr(jp, "_HOST", fake_host(dialogs=dialog))
     return server_module
 
 
@@ -763,8 +781,29 @@ class _Ticker:
             pass
 
 
+async def _free_ticks(seconds: float) -> int:
+    """How many turns this loop manages in `seconds` with nothing blocking.
+
+    The two tests below used to compare against a bare `> 30`, which is not a
+    property of the code but of the host's timer resolution: the ticker sleeps
+    5 ms and Windows cannot sleep shorter than about 15.6, so 0.4s buys ~25
+    turns there against ~80 on macOS and a passing suite failed on the
+    arithmetic rather than on the behaviour.
+
+    Measuring the unblocked loop first compares like with like on whatever
+    loop is underneath. The property is unchanged and the discriminator is
+    still enormous: if `tty_for_pid` ran ON the loop the count would be ~0,
+    not half.
+    """
+    async with _Ticker() as ticker:
+        await asyncio.sleep(seconds)
+    return ticker.ticks
+
+
 @pytest.mark.asyncio
 async def test_a_slow_ps_does_not_freeze_the_loop(monkeypatch):
+    free = await _free_ticks(0.4)
+
     def slow(pid):
         time.sleep(0.4)
         return None
@@ -772,13 +811,14 @@ async def test_a_slow_ps_does_not_freeze_the_loop(monkeypatch):
     monkeypatch.setattr(dialog, "tty_for_pid", slow)
     async with _Ticker() as ticker:
         assert await dialog.answer(4242, "return") == base.NO_TERMINAL
-    assert ticker.ticks > 30, (
-        f"the loop only got {ticker.ticks} turns while `ps` ran — the voice "
-        "path shares this thread")
+    assert ticker.ticks > free / 2, (
+        f"the loop only got {ticker.ticks} turns while `ps` ran, against "
+        f"{free} with nothing blocking — the voice path shares this thread")
 
 
 @pytest.mark.asyncio
 async def test_a_slow_pgrep_does_not_freeze_the_loop(monkeypatch):
+    free = await _free_ticks(0.4)
     monkeypatch.setattr(dialog, "tty_for_pid", lambda pid: "/dev/ttys006")
 
     def slow():
@@ -788,8 +828,9 @@ async def test_a_slow_pgrep_does_not_freeze_the_loop(monkeypatch):
     monkeypatch.setattr(dialog, "_terminal_is_running", slow)
     async with _Ticker() as ticker:
         assert await dialog.answer(4242, "return") == base.NOT_FOUND
-    assert ticker.ticks > 30, (
-        f"the loop only got {ticker.ticks} turns while `pgrep` ran")
+    assert ticker.ticks > free / 2, (
+        f"the loop only got {ticker.ticks} turns while `pgrep` ran, against "
+        f"{free} with nothing blocking")
 
 
 def test_the_ps_timeout_bounds_a_synchronous_caller(monkeypatch):
