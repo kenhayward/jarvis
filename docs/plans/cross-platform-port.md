@@ -67,26 +67,35 @@ signal for acoustic echo cancellation.
 
 ## Phase 3 — what is left
 
-**One item.** The rest of this section is the record of how the others were
-answered; `docs/plans/windows-handoff.md` is the live document.
-
-- **Spawning `claude.cmd`. STILL OPEN, and untested rather than
-  known-broken.** `create_subprocess_exec` cannot run a `.cmd` or `.bat`
-  directly — those need the command processor. `claude_env.split_command`
-  fixed the *splitting* half in phase 1; the *spawning* half was left to the
-  two call sites (`brain.py`, `run_executor.py`) and never done.
-
-  It has not bitten on the Windows box because Claude Code installed there
-  as `claude.exe`, from the native installer. But this repository's own setup
-  instructions say `npm install -g @anthropic-ai/claude-code`, and on Windows
-  npm writes a **`claude.cmd`** shim — so the documented path leads straight
-  into the unhandled case. Every test fakes `claude` at the subprocess seam,
-  so nothing in the suite would catch it either.
-
-  Verify it by installing the npm shim and spawning it, not by reasoning
-  about it.
+**No code.** What remains is one unverified guess (`_terminal_argv`) and
+taking `continue-on-error` off the Windows CI job. The rest of this section
+is the record of how the items were answered;
+`docs/plans/windows-handoff.md` is the live document.
 
 Answered, and each in the same commit as its implementation:
+
+- ~~**Spawning `claude.cmd`.**~~ **ANSWERED AND FIXED 2026-09-09, and the
+  premise was wrong.** `create_subprocess_exec` **can** run a `.cmd` —
+  measured, rc 0 — because Windows reaches a batch file through the command
+  processor implicitly. No spawn wrapper was ever needed.
+
+  The real defect is that the implicit route re-parses the ARGUMENTS: a
+  newline truncates one and `%NAME%` is expanded. `run_executor.py` was never
+  exposed (simple argv, prompt over stdin — a real run through the npm shim
+  succeeded untouched). `brain.py` was: its multi-line `--append-system-prompt`
+  lost **60% of the system prompt**, silently, on any npm install.
+
+  The predicted cure — `cmd.exe /c` at the call sites — was measured and
+  damages the argument identically. The actual cure is to keep multi-line text
+  out of argv entirely: the prompt goes to a file
+  (`--append-system-prompt-file`, accepted as far back as the 2.1.224 floor),
+  and `preflight`'s `claude_shim` check WARNs when `claude` is a batch shim.
+
+  The lesson generalises past this item: **the task had been scoped for months
+  from a belief nobody had measured**, and measuring changed both the
+  diagnosis and the fix. This plan's own instruction — "verify it by
+  installing the npm shim and spawning it, not by reasoning about it" — is
+  what caught it.
 
 - ~~**Session steering.**~~ **BUILT.** `socket.AF_UNIX` is not exposed by
   CPython on Windows, and Claude Code there publishes a NAMED PIPE in the

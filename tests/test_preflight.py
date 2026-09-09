@@ -697,7 +697,8 @@ async def test_run_checks_runs_all_registered_checks(monkeypatch):
     # built the same way production builds the run, rather than pinning a
     # complete host and calling every other one a failure.
     expected = {"claude_cli", "claude_login", "voice",
-                "anthropic_key_leftover", "cross_session_inbound"}
+                "anthropic_key_leftover", "cross_session_inbound",
+                "claude_shim"}
     if jarvis_platform.can(jarvis_platform.CAP_DIALOG_KEY):
         expected.add("accessibility")
     if jarvis_platform.can(jarvis_platform.CAP_SCREEN_CAPTURE):
@@ -783,3 +784,74 @@ def test_spoken_summary_warn_counts_as_something_wrong():
     summary = preflight.spoken_summary(checks)
     assert summary != ""
     assert "One thing needs attention" in summary
+
+
+# --- claude_shim: a .cmd shim mangles argv --------------------------------
+#
+# Measured on a real Windows box, 2026-09-09. `npm install -g
+# @anthropic-ai/claude-code` — the install this repository's README documents
+# — writes a `claude.cmd`, and Windows reaches a `.cmd` through the command
+# processor, so cmd.exe re-parses the argument list. A newline truncates an
+# argument and `%NAME%` is expanded.
+#
+# The system prompt no longer travels that way (see
+# tests/test_launch_prompt_transport.py), which is what made this survivable
+# rather than fatal. What is left is every other argv value — the model name,
+# the session id, an --mcp-config path — so this reports rather than refuses.
+
+def _shim_check(monkeypatch, *, which=None, env_path=None):
+    monkeypatch.setattr(preflight.shutil, "which",
+                        lambda name: which if name == "claude" else None)
+    if env_path is None:
+        monkeypatch.delenv("JARVIS_CLAUDE_PATH", raising=False)
+    else:
+        monkeypatch.setenv("JARVIS_CLAUDE_PATH", env_path)
+    return preflight._check_claude_shim_sync()
+
+
+def test_a_cmd_shim_on_path_is_a_warning(monkeypatch):
+    check = _shim_check(monkeypatch, which=r"C:\Users\x\AppData\Roaming\npm\claude.cmd")
+    assert check.status == STATUS_WARN
+    assert "claude.cmd" in check.message
+    assert check.remedy, "a warning the user cannot act on is noise"
+
+
+def test_a_bat_shim_is_a_warning_too(monkeypatch):
+    assert _shim_check(monkeypatch, which=r"C:\tools\claude.bat").status == STATUS_WARN
+
+
+def test_the_extension_test_is_case_insensitive(monkeypatch):
+    """Windows paths are not case-sensitive and installers are not consistent."""
+    assert _shim_check(monkeypatch, which=r"C:\tools\CLAUDE.CMD").status == STATUS_WARN
+
+
+def test_a_real_executable_is_ok(monkeypatch):
+    check = _shim_check(monkeypatch, which=r"C:\Users\x\.local\bin\claude.exe")
+    assert check.status == STATUS_OK
+
+
+def test_a_posix_claude_is_ok(monkeypatch):
+    assert _shim_check(monkeypatch, which="/usr/local/bin/claude").status == STATUS_OK
+
+
+def test_it_reports_on_the_binary_jarvis_will_ACTUALLY_run(monkeypatch):
+    """`JARVIS_CLAUDE_PATH` wins over PATH for the brain and every run, so a
+    check that only ever looked at `which` would clear a shim JARVIS is about
+    to spawn — the exact way this defect stayed invisible."""
+    check = _shim_check(monkeypatch,
+                        which=r"C:\Users\x\.local\bin\claude.exe",
+                        env_path=r"C:\Users\x\AppData\Roaming\npm\claude.cmd")
+    assert check.status == STATUS_WARN
+
+
+def test_a_configured_path_with_arguments_is_still_read(monkeypatch):
+    """JARVIS_CLAUDE_PATH may carry arguments; the PROGRAM is the first token,
+    and `claude_env.split_command` is what knows how to find it on Windows."""
+    check = _shim_check(monkeypatch, env_path=r'"C:\Program Files\np m\claude.cmd" --verbose')
+    assert check.status == STATUS_WARN
+
+
+def test_no_claude_anywhere_is_not_this_checks_problem(monkeypatch):
+    """`claude_cli` already FAILs on that. Two checks shouting about one
+    missing binary teaches people to skim the report."""
+    assert _shim_check(monkeypatch, which=None).status == STATUS_OK

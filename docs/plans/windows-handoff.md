@@ -13,14 +13,19 @@ Read this section, then "What is left" below. Everything else is the record
 of how the current state was reached, and is worth reading only when you are
 about to touch the thing it describes.
 
-**Phase 3 is one item from done.** Windows withdraws exactly one tool
+**Phase 3's code is done.** Windows withdraws exactly one tool
 (`answer_dialog`, permanently and by decision). 33 of the 34 tools work, the
 suite is green on a real Windows box, and the CI leg is down from 65 failures
 to nothing known.
 
-**The one open item is spawning `claude.cmd`** — see "What is left". It is
-untested rather than known-broken, and it will not reproduce on a machine
-where Claude Code was installed by the native installer.
+**The last code item — `claude.cmd` — was verified and fixed on 2026-09-09**,
+and the premise it had been carried under since phase 1 turned out to be
+wrong: `create_subprocess_exec` runs a `.cmd` perfectly well. The damage was
+to the ARGUMENTS, not to the spawn. See "What is left" item 1, which is now
+the record rather than a task.
+
+What remains is not code: one unverified guess (`_terminal_argv`) and the CI
+job's `continue-on-error`.
 
 ## State right now
 
@@ -30,10 +35,16 @@ where Claude Code was installed by the native installer.
   were written from documentation; all three have since been corrected
   against a real machine (see the guess table).
 - **The Windows box has been live since 2026-09-08** and the suite runs on
-  it. **It is GREEN as of 2026-09-09** (2488 passed, 78 skipped).
+  it. **It is GREEN as of 2026-09-09** (2489 passed, 78 skipped, 10
+  deselected, ~4min). Measured on a second, fresh Windows checkout that day
+  with Python **3.13** — note `py -3.12` does not resolve on that box (`py`
+  answers 3.14, PATH answers 3.13), so the venv was built from
+  `C:\Program Files\Python313\python.exe`. 3.13 runs the suite clean.
 - `steer_session` built and verified against a live session (PR #15); the
   window list built (PR #16); screen capture built and gated behind
   `JARVIS_SCREEN_CAPTURE`, default off.
+- **The `claude.cmd` item is answered and fixed (2026-09-09).** Not a spawn
+  bug — an argv-fidelity bug in `brain.py` only. See "What is left" item 1.
 - **The Windows CI leg is a separate question from the Windows box**, and
   conflating the two was a real mistake made here: "Windows is green" was
   reported when only this machine was, while the runner sat at 65 failures.
@@ -54,29 +65,65 @@ where Claude Code was installed by the native installer.
 
 ## What is left
 
-Three things, one of them code.
+Two things, neither of them code. Item 1 below is kept as the record of how
+the third was answered, because its premise was wrong for months and the
+correction is the useful part.
 
-### 1. Spawning `claude.cmd` — the last phase 3 item
+### 1. ~~Spawning `claude.cmd`~~ — **DONE 2026-09-09. It was not a spawn bug.**
 
-`asyncio.create_subprocess_exec` cannot run a `.cmd` or `.bat` directly;
-those need the command processor. `claude_env.split_command` fixed the
-SPLITTING half in phase 1 and says so in its own docstring — the spawning
-half was left to the call sites and never done. Two of them:
-`brain.py` and `run_executor.py`.
+Verified on a real box against a real npm install, and **the premise this
+item rested on for the whole port is wrong**: `asyncio.create_subprocess_exec`
+**can** run a `.cmd`. Measured — rc 0, `2.1.266 (Claude Code)`. Windows
+reaches a batch file through the command processor implicitly, so no wrapper
+was ever needed to make it start.
 
-**It has not bitten here, and that is the trap.** Claude Code on this box is
-`claude.exe`, from the native installer, which spawns fine. But `CLAUDE.md`
-tells users to `npm install -g @anthropic-ai/claude-code`, and on Windows npm
-writes a **`claude.cmd`** shim — so the documented install path leads
-straight into the unhandled case. Every test fakes `claude` at the subprocess
-seam, so the suite cannot catch it either.
+What is real is what that implicit route does to the ARGUMENTS, because the
+command processor re-parses them:
 
-Verify it by installing the npm shim and spawning a real run, not by reading
-the code. If it does need fixing, the shape is probably
-`create_subprocess_exec("cmd.exe", "/c", <path>, *args)` at both sites, and
-the argument quoting is then cmd.exe's rules rather than
-CommandLineToArgvW's — which is exactly the class of bug
-`windows/launcher.py` exists to keep in one place.
+* a **newline truncates** the argument; everything after it is dropped
+* **`%NAME%` is expanded**
+
+Seven of nine argument shapes JARVIS actually sends survive; those two do not.
+Nothing is executed — post-newline text is discarded, so this is data loss and
+not injection. Python's batch-file quoting holds that line.
+
+**`run_executor.py` was never exposed.** Its argv is all simple tokens and the
+prompt travels over **stdin** (`run_executor.py:617`). A real run driven
+end-to-end through the npm shim came back `succeeded` in 7.1s with 9 events
+and a correct result, before anything was changed.
+
+**`brain.py` was, badly.** `--append-system-prompt launch_prompt()` is
+multi-line whenever there is a handover to carry, which is every generation
+after the first: **510 of 839 characters, 60%, silently gone** — the whole
+handover block and the paragraph framing it as untrusted. A cold brain is a
+single line and survived untouched, which is why nothing ever looked wrong.
+In one shape it is worse than truncation: the displaced remainder ate the
+prompt argument and the CLI answered `Error: Input must be provided either
+through stdin or as a prompt argument`.
+
+**The fix this document predicted does not work.** `cmd.exe /c <path> args`
+was measured and damages the argument **identically** — it is already what
+happens — and quoting the path breaks the invocation outright. There is no
+quoting of a newline that survives cmd.exe.
+
+The cure is that nothing multi-line may be in a command line at all. The
+brain's prompt is written to a file and only its path is passed
+(`brain.Brain._launch_prompt_file`, `--append-system-prompt-file`). Measured
+as far back as **2.1.224**, the floor `CLAUDE.md` sets, and an unknown flag is
+refused loudly rather than ignored, so a CLI without it cannot fail quietly.
+Proven end-to-end through the npm shim: an instruction on line 3 of the file,
+past the truncating newline, arrives and is obeyed.
+
+A `.cmd` install now works, so `preflight`'s new `claude_shim` check is a
+**WARN and not a FAIL** — what is left is `%NAME%` expansion reaching the
+other argv values (model, session id, `--mcp-config` path).
+
+The lesson worth keeping: **the item was scoped from a belief nobody had
+measured**, and the measurement changed both the diagnosis and the cure. It
+also stayed invisible for the usual reason — every test fakes `claude` at the
+subprocess seam, and the one existing assertion that touched this
+(`"--append-system-prompt" in joined`) was a substring test that kept passing
+on the new flag's own prefix.
 
 ### 2. The last unverified guess: `wt` / `cmd.exe` argv
 
@@ -363,12 +410,13 @@ Two corrections from doing this on a real box (2026-09-08):
   the latter is on the default PATH, so plain `openssl` works and the long
   path below is only needed if it does not.
 
-`core.autocrlf` is `true` by default in Git for Windows. Nothing in the
-repo pins line endings (there is no `.gitattributes`), so a fresh clone
-here checks out CRLF while the repository holds LF. That has not bitten
-yet — the edits in this branch were made with LF preserved and the diffs
-are clean — but it is worth knowing before blaming a whitespace diff on
-something else.
+`core.autocrlf` is `true` by default in Git for Windows. **This was once a
+live hazard and is now closed**: the repo has a `.gitattributes` pinning
+`* text=auto eol=lf`, so a fresh clone here checks out LF and matches what
+the repository holds. Read that file's own comment before touching it — the
+template hashes in `data_paths.py` are over LF, so a CRLF working tree makes
+the live persona look unlisted and every persona update gets refused. (This
+paragraph said "there is no `.gitattributes`" until 2026-09-09; it was stale.)
 
 The certs are not optional for the Vite dev workflow — `vite.config.ts`
 hard-codes `https://localhost:8340`. There is no `openssl` on a stock

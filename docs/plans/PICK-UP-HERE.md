@@ -4,8 +4,8 @@ Paste the block below into a fresh Claude Code session in this repository.
 Everything in it is checkable against the repo — if a claim here disagrees
 with the code, trust the code and fix this file.
 
-Last updated 2026-09-09, at the end of the Windows session that built screen
-capture.
+Last updated 2026-09-09, at the end of the Windows session that verified and
+fixed the `claude.cmd` item — the last piece of phase 3 code.
 
 ---
 
@@ -16,40 +16,45 @@ machine" and "What is left" sections at the top — then
 docs/plans/cross-platform-port.md for why the phases are ordered as they
 are. CLAUDE.md is the standing guidance for the repo.
 
-Where things stand: phase 3 is one item from done. Windows runs the same
-suite green on a real box and withdraws exactly one tool (answer_dialog,
-permanently and by decision). The platform layer (jarvis_platform/) is the
-only place that knows what a machine can do.
+Where things stand: PHASE 3'S CODE IS DONE. Windows runs the same suite
+green on a real box (2489 passed, 78 skipped) and withdraws exactly one
+tool (answer_dialog, permanently and by decision). The platform layer
+(jarvis_platform/) is the only place that knows what a machine can do.
 
-The one open code item is spawning claude.cmd. asyncio.create_subprocess_exec
-cannot run a .cmd or .bat directly; claude_env.split_command fixed the
-splitting half in phase 1 and its docstring says the spawning half was left
-to the call sites — brain.py and run_executor.py — and never done. It has
-not bitten on the Windows box because Claude Code there is claude.exe from
-the native installer, but README/CLAUDE.md tell users to npm install, and npm
-on Windows writes a claude.cmd shim. Every test fakes claude at the
-subprocess seam, so the suite cannot catch it.
+The last code item — spawning claude.cmd — was verified and fixed on
+2026-09-09, and it is worth knowing HOW it was wrong, because the same
+shape will recur. The premise carried since phase 1 was that
+create_subprocess_exec cannot run a .cmd. It can; Windows routes a batch
+file through the command processor implicitly. What that route really
+does is re-parse the ARGUMENTS — a newline truncates one, %NAME% is
+expanded — so brain.py's multi-line --append-system-prompt was losing 60%
+of the system prompt on any npm install, silently, while run_executor.py
+(simple argv, prompt over stdin) was never exposed at all. The predicted
+fix, cmd.exe /c at the call sites, damages the argument identically. The
+prompt now travels as a file. Nobody had measured any of it.
 
-Please start by VERIFYING it rather than fixing it: install the npm shim
-alongside the native binary, point JARVIS_CLAUDE_PATH at the .cmd, and try a
-real run. If it spawns fine, say so and we'll close the item. If it doesn't,
-fix both call sites and mind that the argument quoting becomes cmd.exe's
-rules rather than CommandLineToArgvW's.
-
-Two smaller things after that, both in "What is left":
+Two things are left, NEITHER of them code:
 - windows/launcher.py::_terminal_argv is the last unverified guess in the
-  handoff's table — a successful terminal open has never actually been seen.
+  handoff's table — a successful terminal open has never actually been
+  seen. Point open_in_terminal at a real project and look.
 - The Windows CI job still carries continue-on-error. Nothing is known to
-  fail there now, so it's ready to come off as its own change once a run or
+  fail there, so it's ready to come off as its own change once a run or
   two is clean. Check the JOB, not the run's conclusion: a green tick can
   hold a red Windows leg inside it.
+
+After those, phase 3 closes and the next real work is phase 4:
+server-side speech recognition. See cross-platform-port.md — it is the
+blocker for Electron and it improves macOS at the same time by retiring
+the echo heuristics in speech.py.
 
 Some ground rules this port has been run under, which matter more than usual
 here:
 - jarvis_platform/windows/ was written from documentation and is being
   corrected by measurement. Measure on the real machine before writing a
-  comment as fact. I got this wrong once and put a wrong diagnosis into a
-  commit message (PR #20 vs #24 — the DACL story in the handoff).
+  comment as fact. This has now cost real work twice: a wrong diagnosis in
+  a commit message (PR #20 vs #24 — the DACL story in the handoff), and a
+  task scoped for months against a premise that was simply untrue (the
+  claude.cmd item above).
 - Declare a capability in the same commit as its implementation, never
   before. A capability says what is BUILT; whether JARVIS may use it today
   is a separate runtime question its module answers.
@@ -58,6 +63,9 @@ here:
   (jarvis_platform.fake.fake_host), never patch jarvis_platform.macos.* by
   name. That mistake has been made three times in this repo and hides until
   the suite runs off macOS.
+- Beware assertions that pass on a substring. `"--append-system-prompt" in
+  joined` kept passing after the flag became --append-system-prompt-file,
+  asserting nothing. Membership in the argv LIST, not `in` a joined string.
 - Run the full suite (bare `pytest`, no flags) before pushing, and the
   frontend gates (cd frontend && npx tsc --noEmit && npm run build) if you
   touch frontend/.
@@ -70,8 +78,10 @@ here:
 
 The macOS suite is the gate and cannot be run from the Windows box. Several
 merged PRs changed shared surfaces (`session_watch.inbox_exists` / `is_pipe`,
-`Secrets.restrict`, `Screen.CAPTURE_GATE`, `tests/conftest.py` rails), so the
-first useful thing on a Mac is simply:
+`Secrets.restrict`, `Screen.CAPTURE_GATE`, `tests/conftest.py` rails), and the
+`claude.cmd` fix changes `brain.py` on BOTH platforms — the launch prompt now
+travels as a file rather than in argv, so the macOS leg is doing real work on
+it. The first useful thing on a Mac is simply:
 
 ```bash
 pytest
@@ -81,6 +91,19 @@ and reporting the number. The last figure recorded here for macOS is 2523
 passed / 2 failed, from *before* any of this work — it is stale, and nobody
 has re-run it since.
 
+## Setting up a fresh Windows box
+
+Two corrections to the handoff's setup section, from doing it again on
+2026-09-09:
+
+- **`py -3.12` may not resolve at all.** On this box `py` answers 3.14 and
+  PATH answers 3.13; there is no 3.12. Build the venv from an absolute
+  path — `C:\Program Files\Python313\python.exe` — and 3.13 runs the suite
+  clean (2489 passed).
+- The repo now HAS a `.gitattributes` pinning `* text=auto eol=lf`, so the
+  CRLF hazard the handoff warns about is closed. Read that file's comment
+  before touching it; the template hashes depend on it.
+
 ## What NOT to do
 
 - Do not remove `continue-on-error` from the Windows CI job on a prediction.
@@ -89,3 +112,6 @@ has re-run it since.
 - Do not "fix" `tests/conftest.py`'s notification rail by narrowing it back
   to one platform. It was inert off macOS for a while and real toasts
   appeared throughout a suite run.
+- Do not move the brain's launch prompt back into argv, and do not "simplify"
+  it by dropping the per-generation filename — a rotation holds the
+  predecessor alive while the successor spawns.

@@ -89,7 +89,11 @@ def test_command_has_exact_flags(tmp_path):
         "the other means the list this test guards is no longer the list the "
         "brain is launched with")
     assert "--disallowedTools" not in cmd
-    assert "--append-system-prompt" in joined
+    # Membership in the LIST, not a substring of the joined string: the prose
+    # moved to `--append-system-prompt-file` and the old `in joined` spelling
+    # kept passing on the new flag's own prefix, asserting nothing.
+    assert "--append-system-prompt-file" in cmd
+    assert "--append-system-prompt" not in cmd
     assert "--mcp-config" not in cmd
 
 
@@ -409,7 +413,9 @@ async def test_launch_prompt_names_the_generation_being_started(tmp_path, monkey
     b = brain.Brain(_config(tmp_path))
     try:
         await b.start()
-        prompt = seen[0][seen[0].index("--append-system-prompt") + 1]
+        argv = seen[0]
+        prompt = Path(argv[argv.index("--append-system-prompt-file") + 1]) \
+            .read_text(encoding="utf-8")
         assert "brain generation 1" in prompt and b.generation == 1
     finally:
         await b.stop()

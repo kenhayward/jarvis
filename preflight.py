@@ -179,6 +179,62 @@ async def _check_claude_cli(timeout: float = DEFAULT_CHECK_TIMEOUT) -> Check:
     return Check(name="claude_cli", status=STATUS_OK, message=f"claude {version_str} on PATH.")
 
 
+_SHIM_SUFFIXES = (".cmd", ".bat")
+
+
+def _check_claude_shim_sync() -> Check:
+    """The `claude` JARVIS will spawn is a real program, not a batch shim.
+
+    `npm install -g @anthropic-ai/claude-code` — the install README and
+    CLAUDE.md both document — writes a `claude.cmd` on Windows, and Windows
+    reaches a `.cmd` through the COMMAND PROCESSOR. `create_subprocess_exec`
+    runs it happily (the long-held belief that it cannot is wrong, measured
+    2026-09-09), but cmd.exe re-parses the argument list on the way in: a
+    NEWLINE truncates an argument and everything after it is dropped, and
+    `%NAME%` is expanded. Nothing is executed — this is data loss, not
+    injection.
+
+    A WARN and not a FAIL, because a `.cmd` install now works: the one
+    multi-line argument JARVIS passed was the brain's system prompt, and that
+    travels as a file (`brain.Brain._launch_prompt_file`). A whole run was
+    driven end-to-end through an npm shim to confirm it. What is left is the
+    `%NAME%` expansion, which still reaches every other argv value — the
+    model name, the session id, an `--mcp-config` path — so the user is told
+    rather than stopped.
+
+    Resolved the way the BRAIN resolves it, not with a bare
+    `shutil.which("claude")`: `JARVIS_CLAUDE_PATH` wins over PATH for the
+    brain and for every run, so checking PATH alone would clear a shim JARVIS
+    is about to spawn.
+    """
+    spec = os.getenv("JARVIS_CLAUDE_PATH") or shutil.which("claude")
+    if not spec:
+        # `claude_cli` already FAILs on a missing binary; saying it twice
+        # teaches people to skim the report.
+        return Check(name="claude_shim", status=STATUS_OK,
+                     message="No `claude` configured; see the claude_cli check.")
+
+    argv = claude_env.split_command(spec)
+    program = argv[0] if argv else spec
+    if not program.lower().endswith(_SHIM_SUFFIXES):
+        return Check(name="claude_shim", status=STATUS_OK,
+                     message=f"`claude` is a real program: {program}")
+
+    return Check(
+        name="claude_shim",
+        status=STATUS_WARN,
+        message=(
+            f"`claude` resolves to a batch shim ({Path(program).name}). Windows "
+            "runs it through cmd.exe, which expands %NAME% inside arguments."
+        ),
+        remedy=(
+            "Install Claude Code with its native installer so `claude` is an "
+            "executable, or point JARVIS_CLAUDE_PATH at the claude.exe inside "
+            "the npm package (node_modules/@anthropic-ai/claude-code/bin)."
+        ),
+    )
+
+
 def _config_dir_from_env(env: dict[str, str]) -> Path:
     """Where `claude` reads its config from, under `env` -- honours
     CLAUDE_CONFIG_DIR exactly like the CLI does, falling back to its
@@ -724,7 +780,8 @@ def enable_cross_session_inbound() -> tuple[bool, str]:
 _ASYNC_CHECKS = (_check_claude_cli, _check_claude_login, _check_accessibility,
                  _check_voice)
 _SYNC_CHECKS = (_check_anthropic_key_leftover_sync,
-                _check_cross_session_inbound_sync, _check_screen_recording_sync)
+                _check_cross_session_inbound_sync, _check_screen_recording_sync,
+                _check_claude_shim_sync)
 
 # Checks that only mean anything where the capability exists.
 #

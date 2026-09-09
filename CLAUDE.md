@@ -105,7 +105,12 @@ the commit why the alternative was worse.
 ## Key Files
 - `server.py` — Main server, WebSocket handler, HTTP API, action system
 - `brain.py` — The voice brain: one long-lived `claude -p` process on the
-  user's Claude subscription, fed over stdin as stream-json
+  user's Claude subscription, fed over stdin as stream-json. Its system
+  prompt travels as a FILE (`--append-system-prompt-file`), never in argv:
+  an npm install of Claude Code on Windows is a `claude.cmd`, cmd.exe
+  truncates any argument at a newline, and `launch_prompt()` is multi-line
+  whenever there is a handover — 60% of it went missing, silently. Nothing
+  multi-line goes in a command line here
 - `jarvis_mcp.py` — Stdio MCP server exposing JARVIS's tools to the brain;
   forwards `tools/call` to `POST /internal/tool`
 - `speech.py` — Sentence splitting and the scheduler that owns every
@@ -152,7 +157,11 @@ the commit why the alternative was worse.
 - `preflight.py` — First-run environment checks: `claude` CLI/login,
   Accessibility, the voice (backend-aware: the `say` binary and whether the
   configured voice is actually installed, or the Fish key), cross-session
-  steering
+  steering, and whether `claude` is a batch shim (`claude_shim` — a WARN,
+  because a `.cmd` install works now that the prompt is a file; what is left
+  is `%NAME%` expansion in the other argv values). That check resolves
+  `JARVIS_CLAUDE_PATH` the way the brain does, not with a bare
+  `shutil.which`, or it would clear a shim JARVIS is about to spawn
 - `claude_env.py` — The environment every spawned Claude Code child gets,
   including the `ANTHROPIC_*` scrub, and `split_command` for the configured
   `claude` path (POSIX splitting destroys a Windows one)
