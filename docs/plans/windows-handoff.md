@@ -13,12 +13,14 @@ are ordered the way they are. This document is only about doing phase 3.
 - Phase 2 (the platform layer) — merged, PR #4.
 - Phase 3 — merged, PR #5. The tool token, the launcher and notifications
   were written from documentation.
-- **The Windows box is live as of 2026-09-08** and the suite runs on it.
-  `fix/windows-portability-defects` carries the first round of corrections.
-- macOS suite: 2523 passed, 2 failed. Both failures are
-  `tests/test_projects_api.py` (`RuntimeError: Event loop is closed`),
-  pre-existing and unrelated, parked until after this phase. **Not re-run
-  since the corrections below — the macOS CI leg is the gate for them.**
+- **The Windows box has been live since 2026-09-08** and the suite runs on
+  it. **It is GREEN as of 2026-09-09**, and `steer_session` is built and
+  verified against a live session (PR #15).
+- macOS suite: 2523 passed, 2 failed, from before any of this. **Not re-run
+  here — it cannot be, and it remains the gate.** Note two of the PRs below
+  changed a shared module's public surface (`session_watch.inbox_exists`,
+  `is_pipe`) and one added a `Secrets` protocol method (`restrict`), so the
+  macOS leg is doing real work on those and not just confirming a no-op.
 
 ### The Windows number, and how it moved
 
@@ -29,11 +31,34 @@ are ordered the way they are. This document is only about doing phase 3.
 | project resolution + test isolation | 126 | 2351 | 11 | #7 |
 | named pipe, journal order, memory encoding | 95 | 2372 | **0** | #8 |
 | template line endings | 88 | 2379 | 0 | #9 |
-| pid probe, run executor, brain | *pending* | | | |
+| pid probe, run executor, brain | 73 | 2392 | 0 | #10 |
+| strftime, token privacy, capability gates | 49 | 2407 | 0 | #11 |
+| mcp.json privacy, `_scan_roots`, the tail | 30 | 2420 | 0 | #12 |
+| the speech race, six singletons | 25 | 2422 | 0 | #13 |
+| `answer_dialog`, `say`, the last stragglers | **0** | **2447** | 0 | #14 |
+| `steer_session` over a named pipe | 0 | **2452** | 0 | #15 |
 
 Read the first two rows carefully: the ERRORS collapsed while the FAILURE
 count barely moved. The errors were portability defects in shared code; the
 failures are the port itself being unfinished, and they were the real work.
+
+Two things that arc is worth remembering for, beyond the number:
+
+* **The production defects were never where the failure counts pointed.**
+  One keyword in `_write_atomically` was 432 errors; one leading `/` in
+  `_PLAIN_PATH_RE` was 42 failures and meant JARVIS could resolve no project
+  at all; one dash in a `strftime` format broke every spoken rate-limit
+  answer. The big clusters were single upstream causes, and the small ones
+  held the real bugs — `test_private_data` contributed two failures and one
+  of them was the user's Notion and GitHub tokens sitting in a
+  world-readable `mcp.json`.
+* **Several tests were passing for the wrong reason**, which is worse than
+  failing: the traversal refusals were answering "unknown project" rather
+  than refusing containment, `test_screen_sight` was judging a process that
+  never started, and `os.kill(pid, 0)` was a liveness probe that KILLED what
+  it asked about. A second platform is a good detector of tests that assert
+  nothing — including the flaky macOS one, which turned out to be a genuine
+  race that a coarser timer made deterministic.
 
 Boot is no longer the blocker: `ensure_tool_token()` returns a token, and
 `import usage_scan` (and therefore `import server`) succeeds.
@@ -332,18 +357,38 @@ gets built at all.
   So `CAP_DIALOG_KEY` stays absent, permanently, and that is the answer the
   plan already called defensible rather than a gap to close.
 
-## What the four withdrawn tools are worth building, in order
+## The withdrawn tools: one built, two decisions, one written off
 
-All four spikes are now answered, so this is a ranking rather than an open
-question. Agreed 2026-09-09, to be picked up after the test cleanup.
+All four spikes are answered, so this is a ranking rather than an open
+question. Agreed 2026-09-09.
 
-1. **`steer_session` — build it.** Best capability per unit of effort of the
-   three that remain. `AF_UNIX` does not exist here, but Claude Code
-   publishes a real named pipe (`\\.\pipe\LOCAL\cc-msg-…`, measured, and
-   enumerable without disturbing it — see `session_watch._inbox_exists`), and
-   a named-pipe transport is ordinary Windows I/O. It restores most of the
-   "notice a stuck session and unblock it" loop on its own: steering covers
-   everything except a session wedged behind a permission prompt.
+1. ~~**`steer_session` — build it.**~~ **BUILT AND VERIFIED LIVE, PR #15.**
+   `AF_UNIX` does not exist here; Claude Code publishes a named pipe in the
+   same `messagingSocketPath` field, and `session_steer` writes its one JSON
+   line to it with the ordinary file API. `CAP_SESSION_STEER` is declared, so
+   Windows now withdraws three tools rather than four.
+
+   **The end-to-end check has been done, and it is worth being exact about
+   what it settles.** Every earlier statement here stopped at "the bytes left
+   this process", which is all the macOS socket path can claim either — no
+   reply is read back on either platform, and `SENT` says so. On 2026-09-09
+   this session steered ITSELF through the production call:
+
+       is_pipe          -> True
+       inbox_exists     -> True
+       post_to_session  -> sent
+
+   and the message then arrived IN that session, rendered as a turn and
+   correctly attributed to another Claude session rather than to the user.
+   So the wire format needs no change on Windows — the same JSON lines the
+   AF_UNIX path sends are accepted verbatim — and the PEER-authority
+   semantics in `session_steer`'s docstring hold here too.
+
+   It steered its own session on purpose: the proof is then visible to the
+   person watching, and no other live session of the user's is disturbed to
+   get it. Anyone repeating this should pick their own session for the same
+   reason, and can find it by matching `sessionId`.
+
 2. **`look_at_screen` / `what_is_on_screen` — a DECISION, not an obstacle.**
    The capture itself is easy. What is unresolved is consent: macOS gates
    these behind TCC and Windows asks nobody, so shipping them unchanged
@@ -351,11 +396,27 @@ question. Agreed 2026-09-09, to be picked up after the test cleanup.
    that model is chosen.
 3. **`answer_dialog` — write it off.** See the spike above.
 
-Worth stating plainly what the current state costs, because it is the whole
-of the difference: on Windows JARVIS OBSERVES BUT CANNOT INTERVENE. The
-roster, the "needs a human hand" detection and the toast that announces it
-all work. What is missing is the acting half — he can tell you a session is
-stuck and cannot answer it for you. 30 of the 34 tools are unaffected.
+What the remaining gap costs, stated plainly, because it is now much smaller
+than it was. Until PR #15 the honest summary was "on Windows JARVIS observes
+but cannot intervene": the roster, the "needs a human hand" detection and the
+toast that announces it all worked, and none of the acting half did.
+
+Steering closes most of that. He can now notice a session needs attention AND
+send it an instruction. What is left is the narrow case that steering cannot
+reach on ANY platform — a session wedged behind a permission prompt, which is
+what `answer_dialog` exists for and which stays a macOS capability. So the
+sentence is now: on Windows JARVIS can talk to a session but cannot press a
+key in it. 31 of the 34 tools work.
+
+One thing NOT to assume about that, checked rather than remembered.
+`_perform_dialog`'s "another application is hosting it, so that one needs
+your own hand" is never heard on Windows. That line is reached only from a
+STAGED dialog, and nothing can be staged when the brain has not been offered
+`answer_dialog` in the first place — which is the withdrawal working as
+designed: no schema, no attempt, no apology. What the user gets is the
+needs-you announcement telling them a session wants a hand, and no offer to
+press the key. Anyone wording a Windows-specific message for this should
+notice there is currently no code path that would say it.
 
 ## What can still be done on the Mac in parallel
 
