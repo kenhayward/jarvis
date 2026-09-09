@@ -18,6 +18,7 @@ outside tmp_path.
 import importlib
 import os
 import sys
+import time
 import threading
 from pathlib import Path
 
@@ -451,3 +452,59 @@ def test_an_approval_wakes_the_page_too(monkeypatch, client):
         assert _next_message(ws)["type"] == "hello"
         specs.record_approval(str(root), relative)
         assert _next_message(ws)["type"] == "changed"
+
+
+def test_an_edit_that_does_not_move_the_mtime_is_still_noticed(wired):
+    """The defect the fingerprint had, pinned so it cannot come back.
+
+    `_specs_fingerprint` compared modification TIMES. Windows timestamps are
+    coarse enough that ten files written one after another share a single
+    `st_mtime` -- measured on a real box -- so an edit landing in the same
+    tick as the previous write changed the document and not the fingerprint,
+    and the SPECS tab never heard about it. It surfaced as
+    `test_the_socket_notices_a_change_in_either_copy` failing about one run
+    in five, including in isolation: not load, the clock.
+
+    The mtime is forced back rather than raced for, so this states the
+    property on EVERY platform instead of only where the clock is coarse
+    enough to lose. It fails again the moment the fingerprint depends on a
+    timestamp.
+    """
+    server, root, relative = wired
+    doc = root / relative
+    was = doc.stat()
+    before = server._specs_fingerprint()
+
+    doc.write_text(doc.read_text(encoding="utf-8") + "\n## Added later\n\nx\n",
+                   encoding="utf-8")
+    os.utime(doc, (was.st_atime, was.st_mtime))
+
+    assert doc.stat().st_mtime == was.st_mtime, "the mtime must not have moved"
+    assert server._specs_fingerprint() != before, \
+        "the document changed and the fingerprint did not"
+
+
+def test_a_touch_that_moves_nothing_is_not_a_change(wired):
+    """The other half, and the reason the mtime left each part.
+
+    A timestamp that moves while the content does not is a touch, and
+    announcing it wakes every open tab to reconcile against a document
+    identical to the one it already has.
+
+    The NEWEST document is touched forward, deliberately. `list_documents`
+    orders newest first and the fingerprint joins the parts in that order,
+    so a touch that changes a document's POSITION does change the
+    fingerprint -- correctly, because the order is what the page shows.
+    Touching the one already at the top moves nothing, which is the case
+    this pins.
+    """
+    server, root, _relative = wired
+    newest = specs.list_documents(str(root))[0]
+    doc = root / newest["path"]
+    before = server._specs_fingerprint()
+
+    was = doc.stat().st_mtime
+    os.utime(doc, (was + 600, was + 600))
+
+    assert specs.list_documents(str(root))[0]["path"] == newest["path"],         "the touch must not have reordered anything"
+    assert server._specs_fingerprint() == before
