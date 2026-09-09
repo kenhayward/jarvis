@@ -28,6 +28,30 @@ def _wav(seconds: float = 0.5, rate: int = 22050) -> bytes:
     return b"RIFF" + struct.pack("<I", 4 + len(chunks)) + b"WAVE" + chunks
 
 
+@pytest.fixture
+def say_on_path(monkeypatch):
+    """Make `say` resolvable, without pretending anything else is.
+
+    The tests that use this are about the `say` backend's own logic — the
+    argv it builds, that the text goes to STDIN and never becomes an
+    argument, that the working file is removed, that a failing backend hands
+    over. All of that is ordinary Python and runs anywhere. What does not is
+    `_synthesize_say`'s first line, a `shutil.which("say")` guard that
+    returns None off macOS and bails before any of it.
+
+    So the binary is a PRECONDITION here, not the behaviour under test, and
+    faking it is the same move as the faked `_spawn_synth` beside it —
+    nothing is ever executed either way. Narrow on purpose: only `say`
+    answers, so a piper or fish lookup in the same test stays honest, and
+    the test that asserts the MISSING-say path keeps its own `which -> None`.
+    """
+    import tts
+    real = tts.shutil.which
+    monkeypatch.setattr(
+        tts.shutil, "which",
+        lambda name: "/usr/bin/say" if name == "say" else real(name))
+
+
 def _fake_spawn(spawned: list, *, audio: bytes | None = None, error: str | None = None):
     """Stand in for a local synthesiser: record the invocation, write what it
     would have. `say` names its output with -o, piper with -f."""
@@ -76,7 +100,7 @@ def test_voice_and_rate_come_from_the_environment(monkeypatch):
 # --- the local backend --------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_say_returns_the_wav_it_wrote(monkeypatch):
+async def test_say_returns_the_wav_it_wrote(monkeypatch, say_on_path):
     import tts
     monkeypatch.delenv("JARVIS_TTS_BACKEND", raising=False)
     monkeypatch.delenv("JARVIS_TTS_VOICE", raising=False)
@@ -96,7 +120,7 @@ async def test_say_returns_the_wav_it_wrote(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_the_text_is_written_to_stdin_and_never_becomes_an_argument(monkeypatch):
+async def test_the_text_is_written_to_stdin_and_never_becomes_an_argument(monkeypatch, say_on_path):
     """A chunk is model-written and arrives through speech recognition. On the
     command line, one beginning with a dash would be read as flags."""
     import tts
@@ -111,7 +135,7 @@ async def test_the_text_is_written_to_stdin_and_never_becomes_an_argument(monkey
 
 
 @pytest.mark.asyncio
-async def test_a_configured_voice_and_rate_reach_the_command(monkeypatch):
+async def test_a_configured_voice_and_rate_reach_the_command(monkeypatch, say_on_path):
     import tts
     spawned: list = []
     monkeypatch.setattr(tts, "_spawn_synth", _fake_spawn(spawned))
@@ -124,7 +148,7 @@ async def test_a_configured_voice_and_rate_reach_the_command(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_the_working_file_is_gone_afterwards(monkeypatch):
+async def test_the_working_file_is_gone_afterwards(monkeypatch, say_on_path):
     """Audio JARVIS speaks is never left on disk."""
     import tts
     spawned: list = []
@@ -265,7 +289,7 @@ def test_backends_ready_reports_what_could_actually_speak(monkeypatch, tmp_path)
 # --- falling back rather than going quiet --------------------------------------
 
 @pytest.mark.asyncio
-async def test_a_backend_that_cannot_speak_hands_over_to_say(monkeypatch, tmp_path):
+async def test_a_backend_that_cannot_speak_hands_over_to_say(monkeypatch, tmp_path, say_on_path):
     """Silence is the worst failure JARVIS has: a voice assistant that has
     gone quiet looks broken, not misconfigured. `say` needs nothing, so it
     takes over — and the result says who really spoke."""
@@ -282,7 +306,7 @@ async def test_a_backend_that_cannot_speak_hands_over_to_say(monkeypatch, tmp_pa
 
 
 @pytest.mark.asyncio
-async def test_the_hosted_backend_falls_back_too(monkeypatch):
+async def test_the_hosted_backend_falls_back_too(monkeypatch, say_on_path):
     """A network that is down should cost the voice, not the assistant."""
     import tts
     spawned: list = []
@@ -357,7 +381,7 @@ async def test_sends_balanced_latency_and_assembles_stream():
 
 
 @pytest.mark.asyncio
-async def test_fish_is_reached_only_by_asking_for_it(monkeypatch):
+async def test_fish_is_reached_only_by_asking_for_it(monkeypatch, say_on_path):
     """A key left in `.env` from before must not quietly start billing again."""
     import tts
     monkeypatch.delenv("JARVIS_TTS_BACKEND", raising=False)
