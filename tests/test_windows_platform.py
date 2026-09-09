@@ -33,10 +33,11 @@ def test_windows_declares_only_what_it_has_an_implementation_for():
     the whole design fails the moment this list is a wish."""
     assert WINDOWS.capabilities == {jp.CAP_NOTIFICATIONS, jp.CAP_TERMINAL,
                                     jp.CAP_BROWSER, jp.CAP_EDITOR,
-                                    jp.CAP_SESSION_STEER}
+                                    jp.CAP_SESSION_STEER,
+                                    jp.CAP_WINDOW_LIST}
 
 
-def test_windows_withdraws_the_three_tools_it_cannot_do():
+def test_windows_withdraws_the_two_tools_it_cannot_do():
     """`steer_session` left this list when its transport was written, not
     before: the roster publishes a named pipe here and `session_steer` writes
     to it, exercised over a real pipe in tests/test_session_steer.py.
@@ -50,8 +51,7 @@ def test_windows_withdraws_the_three_tools_it_cannot_do():
     inside it), and aiming a synthetic keystroke by focus instead is the one
     thing `base.Dialogs` forbids outright.
     """
-    assert WINDOWS.withdrawn_tools() == {
-        "look_at_screen", "what_is_on_screen", "answer_dialog"}
+    assert WINDOWS.withdrawn_tools() == {"look_at_screen", "answer_dialog"}
 
 
 def test_windows_still_offers_everything_portable():
@@ -61,13 +61,21 @@ def test_windows_still_offers_everything_portable():
         assert WINDOWS.allows_tool(tool) is True, tool
 
 
-def test_the_unbuilt_providers_are_the_null_objects_not_a_stub():
-    """Screen and dialogs have no Windows implementation, so they must be
-    the base null objects — which refuse — rather than something that
-    half-answers."""
+def test_the_unbuilt_provider_is_the_null_object_not_a_stub():
+    """`dialogs` has no Windows implementation and must be the base null
+    object — which refuses — rather than something that half-answers.
+
+    `screen` is no longer among them: it is a real module implementing
+    the CHEAP half of the protocol. That is not a half-answer, it is one
+    tier of two, and the capability set is what says which — CAP_WINDOW_LIST
+    declared, CAP_SCREEN_CAPTURE not. Its `capture` refuses for the same
+    reason the null object would.
+    """
     from jarvis_platform import base
-    assert WINDOWS.screen is base.NO_SCREEN
+    from jarvis_platform.windows import screen as win_screen
     assert WINDOWS.dialogs is base.NO_DIALOGS
+    assert WINDOWS.screen is win_screen
+    assert WINDOWS.screen is not base.NO_SCREEN
     assert WINDOWS.secrets is win_secrets
 
 
