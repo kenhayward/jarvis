@@ -18,10 +18,16 @@ What is deliberately NOT here yet, and why:
     exact as a tty. If it cannot, `answer_dialog` is a macOS capability and
     this stays absent permanently, which is a defensible answer for a tool
     that sends synthetic keystrokes.
-  * CAP_SESSION_STEER — `socket.AF_UNIX` is not exposed by CPython here.
-    Claude Code on Windows most likely publishes a named pipe instead, but
-    the roster's `socket_path` has to be READ on a real machine before
-    anything is written against it.
+
+CAP_SESSION_STEER was on that list until the roster was read on a real
+machine. `messagingSocketPath` there carries a NAMED PIPE —
+``\\\\.\\pipe\\LOCAL\\cc-msg-<hex>`` — rather than the AF_UNIX socket CPython
+does not expose here, and `session_steer` writes its one JSON line to it with
+the ordinary file API. So it is declared below.
+
+What that proves is exactly what the macOS socket proves and no more: that
+the bytes left this process. Neither platform reads a reply back, and the
+`SENT` constant says so in both.
 
 Everything portable — the run pipeline, memory, the dashboard, the
 repository readers, the Playwright page tools, `github_repo`,
@@ -30,8 +36,8 @@ repository readers, the Playwright page tools, `github_repo`,
 
 from __future__ import annotations
 
-from ..base import (CAP_BROWSER, CAP_EDITOR, CAP_NOTIFICATIONS, CAP_TERMINAL,
-                    Host)
+from ..base import (CAP_BROWSER, CAP_EDITOR, CAP_NOTIFICATIONS,
+                    CAP_SESSION_STEER, CAP_TERMINAL, Host)
 from . import launcher, notifications, secrets
 
 WINDOWS = Host(
@@ -41,6 +47,7 @@ WINDOWS = Host(
         CAP_TERMINAL,
         CAP_BROWSER,
         CAP_EDITOR,
+        CAP_SESSION_STEER,
     }),
     notifications=notifications,
     launcher=launcher,
