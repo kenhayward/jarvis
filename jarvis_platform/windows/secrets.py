@@ -173,6 +173,32 @@ def _lock_down(path: Path) -> None:
         raise PrivateFileUnsupported(
             f"could not restrict {path} to this user: {out.strip()[:200]}")
 
+    # VERIFIED, not assumed. icacls exiting 0 says the command was accepted;
+    # it does not say the DACL now reads the way this function's docstring
+    # promises, and `create_private` publishes that promise to everything
+    # that trusts the token afterwards.
+    #
+    # The gap is real and is why this check exists. On the Windows CI runner
+    # `/inheritance:r /grant:r` exits 0 and leaves the three inherited ACEs
+    # in place — measured, the DACL there reads
+    #
+    #     runnervm\runneradmin, nt authority\system,
+    #     builtin\administrators, owner rights
+    #
+    # with our grant correctly added and nothing removed. Without this the
+    # file is created, reported private, and only refused later by
+    # `adopt_private` on the next call — far from the cause, and after a
+    # token the promise does not cover has already been written into it.
+    #
+    # Failing here instead means `create_private` deletes the file (see its
+    # handler) and startup stops with the reason, which is the behaviour the
+    # docstrings have always described.
+    why = _dacl_mismatch(path)
+    if why is not None:
+        raise PrivateFileUnsupported(
+            f"icacls reported success but {path} is still not private "
+            f"({why})")
+
 
 def _dacl_mismatch(path: Path) -> str | None:
     """None when the DACL is exactly one ACE granting this user, else WHY not.
