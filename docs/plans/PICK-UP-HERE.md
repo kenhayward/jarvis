@@ -52,9 +52,19 @@ moving. DO NOT remove it as a tidy-up. When the time comes, check the JOB
 and not the run's conclusion — a green tick can hold a red Windows leg
 inside it.
 
-So the next real work is phase 4: server-side speech recognition. Read
-docs/plans/phase-4-speech.md. 4-zero, 4a and 4b are DONE (2026-09-10); 4c is
-next.
+PHASE 4 IS DONE (2026-09-10) — JARVIS hears you with no Chrome involved,
+through faster-whisper base.en, and speaks through piper. Read
+docs/plans/phase-4-speech.md if you touch the voice path.
+
+The next work is phase 5, the Electron application:
+docs/plans/phase-5-electron.md. It DEPARTS FROM THE PLAN IN TWO WAYS and
+says so at the top — built Windows-first rather than macOS-first, and it is
+an application (tray-resident, supervising its own server) rather than the
+"shell" the phase table called it.
+
+Also now due: phase 3's continue-on-error deferral. It was "after phase 4",
+and phase 4 is done. It is blocked on issue #36 — three test_speech.py
+flakes in one day, two of them in the same test.
 
 Read "How the boundary moved three times in one day" before anything else
 in that document. The audio boundary went segments -> streaming -> segments
