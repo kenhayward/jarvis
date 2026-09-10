@@ -25,7 +25,7 @@ slips:
 * *A working Windows voice build* — phase 3 left this unproven, but Chrome-only
   STT already works there, so it is not what this phase is for.
 
-## The premise this whole phase rests on, and it is NOT measured
+## The premise this phase rests on — MEASURED 2026-09-10, and it holds
 
 `cross-platform-port.md` says:
 
@@ -33,22 +33,50 @@ slips:
 > Google's own builds carry, so **wrapping the existing page in Electron
 > deletes the microphone**.
 
-**Nobody has run that experiment.** It is the same shape as the two premises
-that were carried for months in phase 3 and turned out to be wrong when
-finally measured — `create_subprocess_exec` cannot run a `.cmd` (it can), and
-the launcher's cmd.exe fallback works (it never had). Both were believed,
-written into docstrings, and relied upon by code and by tests that passed
-without testing them.
+That had never been run. It was the same shape as the two beliefs phase 3
+carried for months and found wrong the day they were tested, so this document
+originally opened by refusing to build on it. **4-zero has now been run** — a
+throwaway Electron shell, Electron 44.3.0 / Chrome 152.0.7977.78, on Windows —
+and the premise is **TRUE**. The design below stands.
 
-Worse, the *refinement* this design depends on is also unmeasured. The
-argument below assumes an Electron renderer keeps `getUserMedia` and Web
-Audio and loses **only** `webkitSpeechRecognition`. That is very likely true
-and it is still a claim, and the entire "endpointing stays in the page"
-decision falls if it is wrong.
+**But it is true in a way a feature check would miss, and that is the finding.**
 
-**So phase 4 opens with a spike, not with code.** See 4-zero below. It is
-perhaps an hour's work and it can invalidate the rest of this document, which
-is exactly why it goes first.
+    defined?          YES
+    start() result:   ERROR event: error=network
+
+`webkitSpeechRecognition` **is defined** in an Electron renderer. The
+constructor works. `start()` succeeds and `onstart` fires. It then fails at
+RUNTIME with `error=network`, because the Google API keys are not there.
+
+So `if (!window.webkitSpeechRecognition)` — the obvious capability check, and
+the one `voice.ts:152` already does to pick its constructor — reports that
+everything is fine inside Electron. Anything deciding whether to use the
+browser backend must treat a `network` error at runtime as the signal, never
+the presence of the API. Getting that wrong ships an Electron build whose
+microphone appears to work and silently never returns a transcript.
+
+The refinement the whole design leans on is confirmed too:
+
+    getUserMedia:  OK - track "Default - Microphone (Yeti Nano)" state=live
+    Web Audio:     floor=0/127  median=13/127  peak=61/127  (8s, 80 frames)
+
+Both survive. Web Audio sees real signal with 61 levels between quiet and
+loud, which is a threshold a VAD can work with — measured with speech played
+into the room rather than against a silent mic, because a single peak from a
+quiet room proves the API returns buffers and nothing more.
+
+**One trap found while measuring, worth more than the result.** Electron
+denies media requests unless the app installs a
+`session.setPermissionRequestHandler`. Without it `getUserMedia` fails, and a
+spike that had not granted it would have "proved" the opposite conclusion and
+sent this phase down the streaming road for no reason. The spike logs the
+grant for exactly that reason.
+
+**Still not measured: macOS.** This was run on Windows, and phase 5 is
+"Electron shell, macOS first". Chromium's missing-keys situation is not
+platform-specific and the result is very unlikely to differ, but that
+sentence is how phase 3's mistakes started, so: repeat the spike on the Mac
+before relying on it there.
 
 ## What is measured, as of 2026-09-09
 
@@ -143,19 +171,20 @@ is architecturally cleaner.
 
 ## Sub-phases
 
-### 4-zero — the spike, before any code
+### 4-zero — the spike — **DONE 2026-09-10 on Windows**
 
-Wrap the existing page in a bare Electron shell and answer, by running it:
+| question | answer |
+|---|---|
+| Does `webkitSpeechRecognition` fail there? | **Yes** — but it is DEFINED and fails at runtime with `error=network`, not absent |
+| Does `getUserMedia` still work? | **Yes** — real track, `state=live`, given a permission handler |
+| Does Web Audio work well enough for VAD? | **Yes** — floor 0, median 13, peak 61 of 127; separable |
 
-1. Does `webkitSpeechRecognition` actually fail there? (The premise.)
-2. Does `getUserMedia` still work? (The refinement everything else rests on.)
-3. Does Web Audio still work, well enough to do VAD in the renderer?
+All three as the design needed. Nothing here is invalidated; 4a may proceed.
 
-**If (2) or (3) is false, this document is wrong** and the boundary has to move
-to continuous streaming with server-side VAD — a substantially larger phase.
-Better to learn that in an hour than in a fortnight.
+Outstanding: repeat on macOS before phase 5 relies on it. See the section
+above for why that is worth an hour rather than an assumption.
 
-Output is an answer, not code. Anything built is throwaway and labelled so.
+The spike itself was throwaway and is not in the repository.
 
 ### 4a — the plumbing, with nothing switched on
 
@@ -216,9 +245,9 @@ also change the boundary decision in 4a.
 
 Stated plainly, so it is falsifiable:
 
-* **4-zero finds `getUserMedia` or Web Audio broken in Electron.** The
-  segment boundary collapses; continuous streaming and server-side VAD become
-  mandatory, and 4a is a much larger piece of work.
+* ~~**4-zero finds `getUserMedia` or Web Audio broken in Electron.**~~
+  **Ruled out 2026-09-10 on Windows** — both work. Would still collapse the
+  segment boundary if macOS disagrees, which is why that spike is still owed.
 * **A page-side VAD cannot match Chrome's endpointer** on the cases
   `speech.py` documents. Then endpointing has to move server-side even though
   capture does not, which is an awkward middle the current design avoids.

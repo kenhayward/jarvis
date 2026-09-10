@@ -15,7 +15,7 @@ kept referring to as 4b/4c/4d without ever writing down.
 | 1 | Portability hygiene + a failing Windows CI job | Mac | **merged** (PR #3) |
 | 2 | The platform layer, macOS only | Mac | **merged** (PR #4) |
 | 3 | `jarvis_platform/windows/` — first Windows build | Windows | **code complete** 2026-09-09; CI gate deferred to after phase 4 |
-| 4 | [The speech sidecar](phase-4-speech.md) | Mac, verified on Windows | **designed** 2026-09-10; opens with a spike |
+| 4 | [The speech sidecar](phase-4-speech.md) | Mac, verified on Windows | **designed**, premise verified 2026-09-10; 4a next |
 | 5 | Electron shell, macOS first | Mac | not started |
 | 6 | Windows packaging and release | Windows | not started |
 | 7 | Optional: container / remote speech sidecar | either | not started |
@@ -38,6 +38,10 @@ Chrome's `webkitSpeechRecognition` in the page and sends the resulting *text*
 over the WebSocket; audio only ever travels the other way. Chromium's speech
 service is a Google web service reached with keys only Google's own builds
 carry, so **wrapping the existing page in Electron deletes the microphone**.
+**Measured and confirmed 2026-09-10** (Electron 44.3.0 / Chrome 152) — though
+not in the shape you would guess: the API is DEFINED there and fails at
+runtime with `error=network`, so a feature check reports it working. See
+[`phase-4-speech.md`](phase-4-speech.md).
 
 Moving speech recognition to the backend is therefore a precondition for
 Electron — and it is worth doing for its own sake. A large amount of
