@@ -3,6 +3,10 @@
 Taking JARVIS out of the browser. Written 2026-09-10, immediately after phase
 4 closed.
 
+Implementation plan: [`phase-5-electron-plan.md`](phase-5-electron-plan.md).
+It opens with the hidden-window spike, because that is the one risk below
+which can invalidate this document.
+
 Companion documents: [`cross-platform-port.md`](cross-platform-port.md) for
 why the phases are ordered as they are, and
 [`phase-4-speech.md`](phase-4-speech.md), whose 4-zero spike already answered
