@@ -11,6 +11,8 @@ import sys
 from pathlib import Path
 
 import httpx
+import os
+import shutil
 import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -429,3 +431,41 @@ async def test_empty_text_or_missing_key_short_circuits():
         assert await tts.synthesize_chunk("hi", api_key="", voice_id="v", client=c,
                                           backend="fish", fallback=False) is None
     assert calls == []
+
+
+# --- finding piper on the platform pip installed it for --------------------
+
+
+def test_piper_is_found_beside_the_interpreter_that_installed_it(tmp_path, monkeypatch):
+    r"""The console script `pip install piper-tts` writes for THIS interpreter,
+    whatever this platform calls it.
+
+    On POSIX that is `piper`; on Windows it is `piper.exe`, and looking for a
+    bare `piper` there finds nothing. The fallback cannot save it either:
+    `.venv\Scripts` is not on PATH — which is the entire reason this function
+    looks beside `sys.executable` in the first place — so `which("piper")`
+    returns None too.
+
+    Measured 2026-09-10 on a real Windows box with piper correctly installed
+    and its voice downloaded: `piper_bin()` returned None, `backends_ready()`
+    reported piper unavailable, and JARVIS was mute on a platform that has no
+    `say` to fall back to.
+    """
+    import tts
+    scripts = tmp_path / "Scripts"
+    scripts.mkdir()
+    name = "piper.exe" if os.name == "nt" else "piper"
+    binary = scripts / name
+    binary.write_text("#!/bin/sh\n")
+    binary.chmod(0o755)
+
+    monkeypatch.delenv("JARVIS_PIPER_BIN", raising=False)
+    monkeypatch.setattr(tts.sys, "executable", str(scripts / "python.exe"))
+    # Nothing on PATH, so only the beside-the-interpreter lookup can win.
+    monkeypatch.setattr(tts.shutil, "which", lambda name: None)
+
+    found = tts.piper_bin()
+    assert found is not None, (
+        f"pip installed {name!r} beside the interpreter and piper_bin() "
+        f"could not see it")
+    assert Path(found).name == name

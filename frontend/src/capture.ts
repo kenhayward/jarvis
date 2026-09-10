@@ -22,8 +22,9 @@
  * The endpointer this replaces is Chrome's, and `speech.py` records its
  * measured behaviour — it closes a segment when his voice tails off and hands
  * the user's FIRST WORD over as a final on its own, 1-2s later. That is the
- * bar. `SILENCE_MS` below is deliberately short for the same reason: a
- * generous tail sounds careful and eats the beginning of the reply.
+ * bar, and it is not an easy one: see `SILENCE_MS`, which was set too short
+ * on the first attempt and fragmented a sentence into three turns within a
+ * minute of a live run.
  */
 
 /**
@@ -58,8 +59,24 @@ const RATE = 16000;
 // 3000 (~0.09). This sits well above the floor and well below the voice.
 const SPEECH_LEVEL = 0.02;
 
-// How much silence closes an utterance. Short on purpose — see the header.
-const SILENCE_MS = 700;
+// How much silence closes an utterance.
+//
+// Was 700ms, which was wrong and a live run said so within a minute. Natural
+// speech has gaps longer than that inside one sentence, and every gap became
+// an utterance boundary. Seen 2026-09-10, one sentence arriving as three:
+//
+//     stt(base.en): Pie charts.
+//     stt(base.en): What would you like to do
+//     stt(base.en): That I can then put into my table.
+//
+// Each fragment then reaches the brain as a separate turn, which is worse
+// than a late transcript: it answers half a question.
+//
+// The reasoning behind 700ms was borrowed from the wrong place — speech.py's
+// ECHO grace is short so a generous tail does not eat the START of a reply,
+// but that is about echo, not endpointing. Chrome's endpointer, which this
+// replaces and which `speech.py` measured, closes on a longer gap.
+const SILENCE_MS = 1400;
 
 // Below this, it was a cough or a door. Above it, somebody is dictating and
 // the model's context window is the limit; both ends get cut.
