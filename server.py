@@ -10,6 +10,7 @@ Handles:
 
 import asyncio
 import base64
+import binascii
 import inspect
 import json
 import logging
@@ -731,6 +732,90 @@ FRESH_START_PHRASES = (
     "new conversation", "forget this conversation", "wipe your memory of this",
 )
 FRESH_START_LINE = "Cleared, sir — nothing of that conversation left. Go ahead."
+
+
+async def _final_transcript(raw: str) -> None:
+    """One finished utterance, however it was heard.
+
+    Extracted from the WebSocket handler when `audio_in` arrived, because
+    there are now two ways a sentence reaches JARVIS -- the browser's own
+    recogniser sending text, and the server transcribing audio itself -- and
+    everything past that point is identical: the replay check, the echo
+    verdict, the fresh-start check. Two copies would drift, and the half that
+    drifted would be the one nobody was using yet.
+    """
+    text = apply_speech_corrections(raw.strip())
+    if not text:
+        return
+    verdict = await speech.user_final(text)
+    if verdict == "replay":
+        # "Say that again": resend what was already synthesized —
+        # no brain turn, so no cost and no risk of coming back
+        # with different words. Never routed to _handle_utterance.
+        log.info(f"User (replay): {text}")
+        if not await speech.replay_last():
+            await speech.say(NOTHING_TO_REPLAY_LINE, Priority.NORMAL)
+        return
+    if verdict != "speech":
+        # Say WHY, so a dropped sentence can be diagnosed from the
+        # log alone. Live, "User (echo, ignored): now" was the first
+        # word of the user's reply being eaten, and it took a
+        # transcript read-through to see that -- the age of the
+        # last played chunk is the fact that decides it.
+        since = speech.seconds_since_last_played()
+        ago = f"{since:.1f}s after his last audio" if since != float("inf") \
+            else "with nothing of his played yet"
+        log.info(f"User ({verdict}, ignored, {ago}): {text}")
+        return
+    log.info(f"User: {text}")
+    if _is_fresh_start(text):
+        _spawn(_start_fresh())
+        return
+    _spawn(_handle_utterance(text))
+
+
+# One utterance of 16 kHz mono 16-bit audio. Sixty seconds of it is 1.9 MB
+# raw and about 2.6 MB base64 -- far longer than anything said in one breath,
+# and a ceiling so a bad frame cannot make the server allocate without bound.
+MAX_AUDIO_FRAME_BYTES = 4 * 1024 * 1024
+
+
+async def _transcribe_audio_frame(msg: dict) -> None:
+    """A page that captured an utterance itself, for the server to transcribe.
+
+    Only reachable when the STT backend is NOT `browser`. On the default
+    install the page never sends this and the server has nothing to transcribe
+    it with, so such a frame is IGNORED rather than answered -- the same
+    "withdraw, never fake" instinct the platform layer applies to tools.
+
+    The transcript then goes through `_final_transcript` exactly as the
+    browser's own does, which is the point: nothing downstream knows or cares
+    which recogniser heard it.
+    """
+    if stt.resolve_backend() == stt.BACKEND_BROWSER:
+        log.warning("audio_in frame ignored: the STT backend is the browser's")
+        return
+    raw = msg.get("data")
+    if not isinstance(raw, str) or not raw:
+        return
+    if len(raw) > MAX_AUDIO_FRAME_BYTES:
+        log.warning("audio_in frame of %d bytes refused (limit %d)",
+                    len(raw), MAX_AUDIO_FRAME_BYTES)
+        return
+    try:
+        audio = base64.b64decode(raw, validate=True)
+    except (ValueError, binascii.Error):
+        log.warning("audio_in frame was not valid base64")
+        return
+
+    # The project names bias the recogniser toward the words that reach tools
+    # as ARGUMENTS -- measured worth 4/5 -> 5/5 on proper nouns. They are
+    # untrusted (another process's cwd) and `stt.domain_prompt` filters them.
+    text = await stt.transcribe(audio, projects=_active_project_names())
+    if not text:
+        return
+    log.info("stt(%s): %s", stt.resolve_model(), text[:70])
+    await _final_transcript(text)
 
 
 def _is_fresh_start(text: str) -> bool:
@@ -6809,34 +6894,9 @@ async def voice_handler(ws: WebSocket):
                 except (KeyError, TypeError, ValueError, OverflowError):
                     pass
             elif kind == "transcript" and msg.get("isFinal"):
-                text = apply_speech_corrections(str(msg.get("text", "")).strip())
-                if not text:
-                    continue
-                verdict = await speech.user_final(text)
-                if verdict == "replay":
-                    # "Say that again": resend what was already synthesized —
-                    # no brain turn, so no cost and no risk of coming back
-                    # with different words. Never routed to _handle_utterance.
-                    log.info(f"User (replay): {text}")
-                    if not await speech.replay_last():
-                        await speech.say(NOTHING_TO_REPLAY_LINE, Priority.NORMAL)
-                    continue
-                if verdict != "speech":
-                    # Say WHY, so a dropped sentence can be diagnosed from the
-                    # log alone. Live, "User (echo, ignored): now" was the first
-                    # word of the user's reply being eaten, and it took a
-                    # transcript read-through to see that -- the age of the
-                    # last played chunk is the fact that decides it.
-                    since = speech.seconds_since_last_played()
-                    ago = f"{since:.1f}s after his last audio" if since != float("inf") \
-                        else "with nothing of his played yet"
-                    log.info(f"User ({verdict}, ignored, {ago}): {text}")
-                    continue
-                log.info(f"User: {text}")
-                if _is_fresh_start(text):
-                    _spawn(_start_fresh())
-                    continue
-                _spawn(_handle_utterance(text))
+                await _final_transcript(str(msg.get("text", "")))
+            elif kind == "audio_in":
+                await _transcribe_audio_frame(msg)
     except WebSocketDisconnect:
         log.info("Voice WebSocket disconnected")
     except Exception as e:

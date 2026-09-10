@@ -1,0 +1,38 @@
+# Optional: the local speech backend (JARVIS_STT_BACKEND=whisper).
+#
+# Deliberately NOT in requirements.txt, for the reason requirements-piper.txt
+# gives about the mouth: JARVIS hears perfectly well without any of it, through
+# Chrome's own recogniser in the page. This is a choice, not a prerequisite.
+#
+# What it costs, measured on Windows 2026-09-10 rather than estimated:
+#
+#     faster-whisper and its dependencies   160 MB of site-packages
+#     the base.en model                     141 MB, fetched on first use
+#
+# Why a PACKAGE, when CLAUDE.md prefers the standard library and a subprocess:
+# the subprocess candidate was tested rather than assumed away. whisper.cpp
+# b4938, same base.en weights, over the same twenty recordings, scored
+# IDENTICALLY — 0.00/0.15/0.00 across the three clean conditions, 4/5 tool
+# words. It is also half the disk and puts nothing on the Python path, which
+# is exactly what that rule is for.
+#
+# It lost on one measured fact. Its CLI reloads the 141 MB model on every
+# invocation: 0.59s fixed per call against 0.03s per second of audio, so a
+# 0.41s response becomes 0.75s, permanently, on the hot voice path. JARVIS is
+# a long-lived server and faster-whisper keeps the model resident, so it pays
+# that once at startup instead of once per sentence.
+#
+# `whisper-server.exe` would avoid the reload and keep Python clean, and it is
+# the better answer for anyone who wants it — but it is a daemon to start,
+# supervise and restart, and prebuilt binaries to ship for two platforms,
+# against an import. That trade was made deliberately and can be revisited;
+# `stt.py`'s backends exist so a second one is additive.
+#
+#     .venv/bin/pip install -r requirements-stt.txt
+#
+# The model downloads itself on first use, which is why `stt.model_is_cached()`
+# gates readiness on it: a 141 MB fetch on the voice path would stall the first
+# thing the user ever says. To fetch it deliberately:
+#
+#     .venv/bin/python -c "from faster_whisper import WhisperModel; WhisperModel('base.en')"
+faster-whisper>=1.2.0
