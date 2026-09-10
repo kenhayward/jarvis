@@ -4,8 +4,10 @@ Taking JARVIS from a macOS-only assistant to one that runs on Windows too,
 sequenced so every phase lands on its own and nothing is load-bearing until
 the thing before it works.
 
-Companion document: [`windows-handoff.md`](windows-handoff.md), which is the
-live working reference while the work spans two machines.
+Companion documents: [`windows-handoff.md`](windows-handoff.md), the live
+working reference while the work spans two machines, and
+[`phase-4-speech.md`](phase-4-speech.md), which is the design this document
+kept referring to as 4b/4c/4d without ever writing down.
 
 | # | Phase | Runs on | Status |
 |---|-------|---------|--------|
@@ -13,7 +15,7 @@ live working reference while the work spans two machines.
 | 1 | Portability hygiene + a failing Windows CI job | Mac | **merged** (PR #3) |
 | 2 | The platform layer, macOS only | Mac | **merged** (PR #4) |
 | 3 | `jarvis_platform/windows/` — first Windows build | Windows | **code complete** 2026-09-09; CI gate deferred to after phase 4 |
-| 4 | The speech sidecar | Mac, verified on Windows | not started |
+| 4 | [The speech sidecar](phase-4-speech.md) | Mac, verified on Windows | **designed** 2026-09-10; opens with a spike |
 | 5 | Electron shell, macOS first | Mac | not started |
 | 6 | Windows packaging and release | Windows | not started |
 | 7 | Optional: container / remote speech sidecar | either | not started |

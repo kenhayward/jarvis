@@ -52,9 +52,15 @@ moving. DO NOT remove it as a tidy-up. When the time comes, check the JOB
 and not the run's conclusion — a green tick can hold a red Windows leg
 inside it.
 
-So the next real work is phase 4: server-side speech recognition. See
-cross-platform-port.md — it is the blocker for Electron and it improves
-macOS at the same time by retiring the echo heuristics in speech.py.
+So the next real work is phase 4: server-side speech recognition. It is
+DESIGNED but not started — read docs/plans/phase-4-speech.md, which is the
+document cross-platform-port.md kept referring to as 4b/4c/4d without ever
+writing.
+
+Start with 4-zero, the spike, and do not skip it. The premise the whole
+phase rests on — that wrapping the page in Electron deletes the microphone
+— has never been measured, and phase 3 was twice burned by exactly that
+shape. An hour's spike can invalidate the design, which is why it is first.
 
 Some ground rules this port has been run under, which matter more than usual
 here:
