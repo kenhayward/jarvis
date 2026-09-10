@@ -15,7 +15,7 @@ kept referring to as 4b/4c/4d without ever writing down.
 | 1 | Portability hygiene + a failing Windows CI job | Mac | **merged** (PR #3) |
 | 2 | The platform layer, macOS only | Mac | **merged** (PR #4) |
 | 3 | `jarvis_platform/windows/` — first Windows build | Windows | **code complete** 2026-09-09; CI gate deferred to after phase 4 |
-| 4 | [The speech sidecar](phase-4-speech.md) | Mac, verified on Windows | **designed**, premise verified 2026-09-10; 4a next |
+| 4 | [The speech sidecar](phase-4-speech.md) | Mac, verified on Windows | 4-zero, 4a, 4b **done** 2026-09-10; 4b overturned the boundary and promoted 4d |
 | 5 | Electron shell, macOS first | Mac | not started — but see the TCC note below, learned in 4-zero |
 | 6 | Windows packaging and release | Windows | not started |
 | 7 | Optional: container / remote speech sidecar | either | not started |
@@ -165,8 +165,15 @@ Answered:
 
 1. **Phase 7, the container.** Costs nothing to skip; the protocol exists
    either way.
-2. **Phase 4d, echo cancellation.** The existing text heuristics are ugly but
-   tuned, and nothing downstream depends on removing them.
+2. ~~**Phase 4d, echo cancellation.**~~ **NO LONGER CUTTABLE, and it was
+   measurement that removed it from this list, 2026-09-10.** Recording twenty
+   utterances in a real room found that every candidate engine transcribes
+   JARVIS rather than the user during barge-in — twelve takes out of twelve,
+   and not because he was louder: in three of the four he was at or below the
+   user's own level. The user's interruption does not arrive mangled, it does
+   not arrive. So AEC is not polish on the existing heuristics; it is what
+   makes interruption work at all once transcription leaves the browser.
+   See [`phase-4-speech.md`](phase-4-speech.md).
 3. **`answer_dialog` on Windows.** See above.
 4. **Reading the active browser tab.** No clean Windows equivalent, low
    value. Already declared absent — the macOS `get_chrome_tab_info` was
