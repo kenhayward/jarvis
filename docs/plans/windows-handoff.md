@@ -54,6 +54,12 @@ job's `continue-on-error`.
 
   CI installs both, so the runner was always running these and the local
   figures were never comparable to it.
+
+  **And 2542/60 is STILL not what CI runs.** Measured 2026-09-10: the runner
+  reports 44 skipped where this box reports 60, and the 16 are accounted for
+  exactly — see "Why a local Windows run is 16 tests short of CI" below. The
+  honest way to quote a Windows number is with the skip count beside it and
+  the machine's privileges stated.
 - `steer_session` built and verified against a live session (PR #15); the
   window list built (PR #16); screen capture built and gated behind
   `JARVIS_SCREEN_CAPTURE`, default off.
@@ -89,6 +95,77 @@ job's `continue-on-error`.
   `session_watch.inbox_exists` / `is_pipe`, `Secrets.restrict`,
   `Screen.CAPTURE_GATE`, the `conftest.py` rails, and now `brain.py`'s launch
   prompt, which changed on BOTH platforms.
+
+## Two flaky Windows tests, and why that matters more than it looks
+
+**Measured 2026-09-10 on PR #30.** Two CI runs fired on the SAME commit
+(`2eb04c55`) and disagreed:
+
+| run | macOS | windows |
+|---|---|---|
+| 34456668991 | success | **success** |
+| 34456665927 | success | **failure** |
+
+The failing one:
+
+    FAILED tests/test_speech.py::test_a_failed_synthesis_does_not_break_the_chain
+        - AssertionError: assert 1 == 2
+    FAILED tests/test_windows_screen.py::test_a_capture_with_the_switch_on_photographs_the_whole_desktop
+        - jarvis_platform.base.ScreenError: I couldn't get a picture of your screen, sir
+    = 2 failed, 2556 passed, 44 skipped, 10 deselected =
+
+**They are FLAKY, not environmental, and the distinction is the whole point.**
+The obvious reading of the second one — "it is screen capture, of course a CI
+runner cannot photograph a desktop" — is comfortable and wrong, because a
+runner that cannot photograph a desktop would fail EVERY time. This one
+passed on the same commit minutes earlier. Whatever is happening is timing or
+session-readiness, not a missing capability.
+
+And the first is not screen capture at all. `assert 1 == 2` in the synthesis
+chain is a race, in the same area PR #13 already fixed once ("the speech race,
+six singletons"). Anyone triaging these should notice there are TWO and that
+one explanation does not cover both.
+
+**This is the concrete prerequisite for dropping `continue-on-error`.** That
+removal is deferred until after phase 4 by decision, and this document already
+says a gate that goes red intermittently is worse than one that is honestly
+amber. Here is that, measured: until these two are understood, removing it
+would make main red at random. The deferral now has evidence behind it rather
+than caution.
+
+**A note on reading CI, confirmed rather than assumed.** Run 34456665927's own
+conclusion is `success` while its `pytest (windows-latest)` JOB conclusion is
+`failure` — `continue-on-error` masks the run, not the job. So this document's
+standing advice is exactly right, and now has a worked example: look at the
+JOB. `gh run view <id> --json jobs` is enough, and `gh pr checks` reports job
+conclusions honestly too.
+
+## Why a local Windows run is 16 tests short of CI
+
+Measured 2026-09-10, and it is not the frontend this time. With
+`node_modules` and chromium both installed, this box still reports **60
+skipped against the runner's 44**. The 16 are accounted for exactly:
+
+* **14 symlink-containment tests** — every one skipping with *"cannot create a
+  symlink to test with (A required privilege is not held by the client);
+  symlink containment is unproven on this machine"*. Creating a symlink on
+  Windows needs `SeCreateSymbolicLinkPrivilege`, which an ordinary account
+  does not hold unless **Developer Mode** is on or the shell is elevated.
+  GitHub's runners hold it.
+* **1 ripgrep test** — `no ripgrep on this machine`.
+* **1** `no symlinked ancestor above the data directory here`.
+
+**Read what those 14 are before shrugging.** They are the CONTAINMENT tests —
+`test_resolved_after_containment`, `test_private_data`, `test_repo_tools`,
+`test_internal_tool`, `test_memory_api`, `test_open_tools`, `test_specs`,
+`test_create_project`, `test_session_watch`. They prove a traversal cannot
+escape by way of a symlink. On a box without that privilege they do not fail,
+they vanish, and the rails they guard are unproven there — which is the same
+shape as every other defect this port has found: not a red test, an absent
+one.
+
+Turn Developer Mode on before trusting a local Windows run, and install
+ripgrep. Until then, quote the skip count with the number.
 
 ## What is left
 
@@ -469,7 +546,24 @@ cd frontend && npm ci && cd ..
 copy .env.example .env
 ```
 
-Two corrections from doing this on a real box (2026-09-08):
+**Two things that are not optional if you intend to quote a suite number**,
+learned 2026-09-10 by quoting several that were short:
+
+```
+cd frontend && npm install          # or test_dashboard_page.py skips in full
+python -m playwright install chromium
+winget install BurntSushi.ripgrep.MSVC
+```
+
+and **turn Developer Mode on** (Settings -> System -> For developers), or the
+account cannot create symlinks and 14 containment tests skip themselves rather
+than run. See "Why a local Windows run is 16 tests short of CI".
+
+Three corrections from doing this on a real box (2026-09-08 and 2026-09-10):
+
+* **Python 3.12 may not be there at all.** On the 2026-09-10 box `py` answered
+  3.14 and PATH answered 3.13, with no 3.12 installed. 3.13 runs the suite
+  clean; build the venv from the absolute path of whichever you mean.
 
 * **`py -3.12` may not resolve.** If Python is also installed from the
   Microsoft Store, `py` is the Store launcher and answers 3.13; and a

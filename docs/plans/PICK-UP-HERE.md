@@ -126,11 +126,18 @@ Two corrections to the handoff's setup section, from doing it again on
   PATH answers 3.13; there is no 3.12. Build the venv from an absolute
   path — `C:\Program Files\Python313\python.exe` — and 3.13 runs the suite
   clean.
-- **Install the frontend deps and chromium even if you are not touching
-  `frontend/`.** `tests/test_dashboard_page.py` skips itself in full without
-  them — 16 tests invisible rather than passing. Every Windows figure
-  recorded before 2026-09-10 was short by exactly those. `cd frontend && npm
-  install`, then `python -m playwright install chromium`.
+- **A local Windows run is short unless you set the box up for it.** Two
+  separate gaps, both found by quoting numbers that were wrong:
+  `tests/test_dashboard_page.py` skips in full without `frontend/node_modules`
+  and chromium (16 tests), and 14 CONTAINMENT tests skip without symlink
+  privilege — turn on Developer Mode. Plus ripgrep for one more. Quote the
+  skip count next to the pass count, always; a skipped test is invisible, not
+  green.
+- **Two Windows tests are flaky in CI** (a speech-chain race and a screen
+  capture) — same commit passed and failed minutes apart. Do NOT dismiss the
+  screen one as "CI cannot photograph a desktop": that would fail every time,
+  and it does not. They are the concrete blocker on removing
+  continue-on-error.
 - The repo now HAS a `.gitattributes` pinning `* text=auto eol=lf`, so the
   CRLF hazard the handoff warns about is closed. Read that file's comment
   before touching it; the template hashes depend on it.
