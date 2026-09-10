@@ -65,18 +65,73 @@ loud, which is a threshold a VAD can work with — measured with speech played
 into the room rather than against a silent mic, because a single peak from a
 quiet room proves the API returns buffers and nothing more.
 
-**One trap found while measuring, worth more than the result.** Electron
-denies media requests unless the app installs a
-`session.setPermissionRequestHandler`. Without it `getUserMedia` fails, and a
-spike that had not granted it would have "proved" the opposite conclusion and
-sent this phase down the streaming road for no reason. The spike logs the
-grant for exactly that reason.
+**Three traps found while measuring, worth more than the result.**
 
-**Still not measured: macOS.** This was run on Windows, and phase 5 is
-"Electron shell, macOS first". Chromium's missing-keys situation is not
-platform-specific and the result is very unlikely to differ, but that
-sentence is how phase 3's mistakes started, so: repeat the spike on the Mac
-before relying on it there.
+*(a) The permission handler.* Electron denies media requests unless the app
+installs a `session.setPermissionRequestHandler`. Without it `getUserMedia`
+fails, and a spike that had not granted it would have "proved" the opposite
+conclusion and sent this phase down the streaming road for no reason. The
+spike logs the grant for exactly that reason.
+
+*(b) A quiet reading is not evidence — and it has a second door.* Sampling a
+silent room gives a peak near zero, which only proves the API returns
+buffers. So the Windows run played speech and reported a spread. **The macOS
+run found the hole in that.** Its first attempt reported `median=1/127` with
+`say` running, the mic live and every API returning buffers — because the
+system OUTPUT WAS MUTED. Nothing in the result could reveal it: 1/127 is
+exactly what a genuinely quiet room gives. It was caught only by checking the
+audio routing after the number looked wrong.
+
+The macOS harness now reads the speaker state, forces it, restores it, logs
+it either way, and refuses a Q3 result whose speech window cannot be
+separated from its own quiet baseline. **The Windows run had no such guard
+and got the right answer by luck** — the machine simply happened not to be
+muted. Anyone repeating this should use the macOS harness's shape, not the
+Windows one.
+
+*(c) The scale is 0..128, not 0..127, and clipping hides at the top.*
+`Math.abs(byte - 128)` yields 128 for byte 0, so the Windows probe's "/127"
+label was wrong and its first macOS counterpart printed `peak=128/127`. Worse,
+a saturated microphone reads as a healthy peak: at output volume 100 the
+built-in mic clipped (`peak=127`, 2 clipped samples) and the run had to be
+repeated at 55 to get the unclipped 74 quoted above. Count clipped samples
+separately or a clipped signal will be read as a strong one.
+
+**macOS: MEASURED TOO, same day, same Electron build.** Like-for-like, and
+the premise holds on both:
+
+| | Windows | macOS |
+|---|---|---|
+| Q1 defined? | YES | YES |
+| Q1 `start()` | `error=network` | `error=network` |
+| Q2 `getUserMedia` | OK (Yeti Nano) | OK (built-in, 48 kHz, 1 ch) |
+| Q3 floor / median / peak | 0 / 13 / 61 | 1 / 13 / 74 |
+
+The macOS run also captured the full event sequence — `start` →
+`audiostart` → `error:network` → `end` — with speech playing aloud
+throughout, so the failure is not "nothing was said". Both
+`webkitSpeechRecognition` and `SpeechRecognition` are defined there. **The
+median is identical at 13 on both platforms**, against a quiet baseline whose
+median is 1.
+
+So: Electron deletes transcription and leaves the microphone and Web Audio
+intact, on both platforms. The segment boundary stands.
+
+### A THIRD gate, on macOS only — and phase 5 needs this
+
+`setPermissionRequestHandler` is **necessary but not sufficient** on macOS.
+There is a second gate Windows does not have: TCC. On the first run the
+status went `not-determined` → `granted` via
+`systemPreferences.askForMediaAccess('microphone')`.
+
+**A packaged macOS Electron app needs `NSMicrophoneUsageDescription` in its
+`Info.plist` AND must call `askForMediaAccess`**, or `getUserMedia` fails —
+and it fails in a way that looks *exactly* like the permission-handler trap
+below but is not. You would install the handler, still fail, and have no way
+to tell which gate was shut. That belongs in phase 5's notes as much as here.
+
+(Chromium routed both a permission *request* and a permission *check* for
+media; both were granted, so which is load-bearing is not yet known.)
 
 ## What is measured, as of 2026-09-09
 
@@ -177,12 +232,14 @@ is architecturally cleaner.
 |---|---|
 | Does `webkitSpeechRecognition` fail there? | **Yes** — but it is DEFINED and fails at runtime with `error=network`, not absent |
 | Does `getUserMedia` still work? | **Yes** — real track, `state=live`, given a permission handler |
-| Does Web Audio work well enough for VAD? | **Yes** — floor 0, median 13, peak 61 of 127; separable |
+| Does Web Audio work well enough for VAD? | **Yes** — median 13 against a quiet baseline of 1, both platforms |
 
-All three as the design needed. Nothing here is invalidated; 4a may proceed.
+All three as the design needed, **on Windows and macOS**. Nothing is
+invalidated; 4a may proceed.
 
-Outstanding: repeat on macOS before phase 5 relies on it. See the section
-above for why that is worth an hour rather than an assumption.
+Carried forward to phase 5: macOS has a second, TCC gate that
+`setPermissionRequestHandler` does not satisfy — see above. That is the one
+finding here that is not about phase 4 at all.
 
 The spike itself was throwaway and is not in the repository.
 
@@ -281,8 +338,8 @@ also change the boundary decision in 4a.
 Stated plainly, so it is falsifiable:
 
 * ~~**4-zero finds `getUserMedia` or Web Audio broken in Electron.**~~
-  **Ruled out 2026-09-10 on Windows** — both work. Would still collapse the
-  segment boundary if macOS disagrees, which is why that spike is still owed.
+  **Ruled out on BOTH platforms, 2026-09-10.** Both work; the medians are
+  identical. This one is closed.
 * **A page-side VAD cannot match Chrome's endpointer** on the cases
   `speech.py` documents. Then endpointing has to move server-side even though
   capture does not, which is an awkward middle the current design avoids.

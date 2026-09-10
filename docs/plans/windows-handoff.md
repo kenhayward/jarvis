@@ -35,11 +35,25 @@ job's `continue-on-error`.
   were written from documentation; all three have since been corrected
   against a real machine (see the guess table).
 - **The Windows box has been live since 2026-09-08** and the suite runs on
-  it. **It is GREEN as of 2026-09-09** (2512 passed, 78 skipped, 10
-  deselected, ~4min). Measured on a second, fresh Windows checkout that day
-  with Python **3.13** — note `py -3.12` does not resolve on that box (`py`
+  it. **GREEN as of 2026-09-10: 2542 passed, 60 skipped, 10 deselected**,
+  ~4min. Python **3.13** — note `py -3.12` does not resolve on that box (`py`
   answers 3.14, PATH answers 3.13), so the venv was built from
-  `C:\Program Files\Python313\python.exe`. 3.13 runs the suite clean.
+  `C:\Program Files\Python313\python.exe`, and 3.13 runs the suite clean.
+
+  **Read the SKIP count, not just the pass count.** Every Windows figure
+  recorded here before 2026-09-10 was taken with `frontend/node_modules` and
+  Playwright's chromium absent, and `tests/test_dashboard_page.py` skips
+  itself in full when either is missing — 16 tests that were invisible rather
+  than passing, on the very machine this port is being done on. CLAUDE.md is
+  right that the frontend gate is only needed when you touch `frontend/`, so
+  nobody had installed them; the cost was a suite that looked complete and
+  was not. Install both before quoting a number:
+
+      cd frontend && npm install
+      .venv\Scripts\python -m playwright install chromium
+
+  CI installs both, so the runner was always running these and the local
+  figures were never comparable to it.
 - `steer_session` built and verified against a live session (PR #15); the
   window list built (PR #16); screen capture built and gated behind
   `JARVIS_SCREEN_CAPTURE`, default off.
