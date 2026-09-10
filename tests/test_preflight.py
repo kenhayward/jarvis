@@ -855,3 +855,76 @@ def test_no_claude_anywhere_is_not_this_checks_problem(monkeypatch):
     """`claude_cli` already FAILs on that. Two checks shouting about one
     missing binary teaches people to skim the report."""
     assert _shim_check(monkeypatch, which=None).status == STATUS_OK
+
+
+# --- the voice remedy must name a route that exists on THIS machine --------
+#
+# Issue #32. On a stock Windows box JARVIS cannot speak: `say` is macOS's,
+# piper is optional and not installed, and there is no Fish key. That part was
+# always handled honestly — preflight FAILS loudly. The remedy was the bug: it
+# offered exactly one route off macOS and it was the PAID, HOSTED one, never
+# mentioning piper, which is offline, keyless, cross-platform and already
+# shipped in this repository as `requirements-piper.txt`.
+#
+# piper was then verified working on Windows (2026-09-10), which makes the
+# omission worse: the free answer was there all along.
+
+def _no_say(monkeypatch):
+    monkeypatch.setattr(preflight.shutil, "which", lambda name: None)
+    monkeypatch.delenv("JARVIS_TTS_BACKEND", raising=False)
+
+
+@pytest.mark.asyncio
+async def test_the_remedy_without_say_names_piper(monkeypatch):
+    _no_say(monkeypatch)
+    c = await preflight._check_voice(timeout=1.0)
+    assert c.status == STATUS_FAIL
+    assert "piper" in c.remedy.lower(), c.remedy
+
+
+@pytest.mark.asyncio
+async def test_the_remedy_offers_the_free_route_before_the_paid_one(monkeypatch):
+    """Not merely "mentions piper somewhere". A remedy is read top to bottom
+    and acted on at the first thing that looks like an answer, so the offline
+    keyless one has to come first."""
+    _no_say(monkeypatch)
+    c = await preflight._check_voice(timeout=1.0)
+    low = c.remedy.lower()
+    assert "piper" in low
+    if "fish" in low:
+        assert low.index("piper") < low.index("fish"), (
+            f"Fish is offered before piper: {c.remedy!r}")
+
+
+@pytest.mark.asyncio
+async def test_no_remedy_tells_a_machine_without_say_to_use_say(monkeypatch):
+    """"drop JARVIS_TTS_BACKEND to use the local macOS voice" is sound advice
+    on a Mac and a dead end anywhere else — it points at the very binary that
+    is missing. Checked across every backend, because the same sentence was
+    copied into three remedies."""
+    for backend in ("piper", "fish", None):
+        monkeypatch.setattr(preflight.shutil, "which", lambda name: None)
+        if backend:
+            monkeypatch.setenv("JARVIS_TTS_BACKEND", backend)
+        else:
+            monkeypatch.delenv("JARVIS_TTS_BACKEND", raising=False)
+        c = await preflight._check_voice(timeout=1.0)
+        if c.status == STATUS_OK or not c.remedy:
+            continue
+        low = c.remedy.lower()
+        assert "macos voice" not in low and "local macos" not in low, (
+            f"backend={backend}: remedy points at `say` on a machine without "
+            f"it: {c.remedy!r}")
+
+
+@pytest.mark.asyncio
+async def test_on_a_mac_the_say_route_is_still_offered(monkeypatch):
+    """The fix must not cost macOS its own advice: there, dropping the
+    backend really is the simplest answer."""
+    monkeypatch.setenv("JARVIS_TTS_BACKEND", "fish")
+    monkeypatch.delenv("FISH_API_KEY", raising=False)
+    monkeypatch.setattr(preflight.shutil, "which",
+                        lambda name: "/usr/bin/say" if name == "say" else None)
+    c = await preflight._check_voice(timeout=1.0)
+    assert c.status == STATUS_FAIL
+    assert "say" in c.remedy.lower(), c.remedy

@@ -521,6 +521,33 @@ def _say_voice_names(listing: str) -> set[str]:
     return names
 
 
+# What to suggest INSTEAD of the backend that just failed.
+#
+# Issue #32. Three remedies here used to end with "drop JARVIS_TTS_BACKEND to
+# use the local macOS voice", and the no-`say` one offered exactly one route
+# off macOS: Fish, which is paid, hosted and needs a network. piper was never
+# mentioned, though it is offline, keyless, cross-platform and already shipped
+# in this repository as `requirements-piper.txt` — and it was since verified
+# working on Windows (2026-09-10), which makes the omission worse rather than
+# merely untidy: the free answer was there all along.
+#
+# So the advice is composed from what this machine actually has. `say` is only
+# offered where `say` exists, and piper leads: a remedy is read top to bottom
+# and acted on at the first thing that looks like an answer.
+def _other_voice_routes(exclude: str = "") -> str:
+    routes = []
+    if exclude != "piper":
+        routes.append("install the offline piper voice "
+                      "(`.venv/bin/pip install -r requirements-piper.txt`, then "
+                      "`JARVIS_TTS_BACKEND=piper`)")
+    if shutil.which("say") is not None:
+        routes.append("drop JARVIS_TTS_BACKEND to use the local macOS `say` voice")
+    if exclude != "fish":
+        routes.append("set FISH_API_KEY and JARVIS_TTS_BACKEND=fish for the "
+                      "hosted Fish Audio voice")
+    return ", or ".join(routes) + "."
+
+
 async def _check_voice(timeout: float = DEFAULT_CHECK_TIMEOUT) -> Check:
     """JARVIS must have a voice: a working local synthesiser, or a Fish key.
 
@@ -545,8 +572,8 @@ async def _check_voice(timeout: float = DEFAULT_CHECK_TIMEOUT) -> Check:
                 status=STATUS_FAIL,
                 message="JARVIS_TTS_BACKEND=piper but `piper` was not found.",
                 remedy=("Install it into the interpreter JARVIS runs on: "
-                        "`.venv/bin/pip install -r requirements-piper.txt`, or "
-                        "drop JARVIS_TTS_BACKEND to use the local macOS voice."),
+                        "`.venv/bin/pip install -r requirements-piper.txt`. "
+                        "Otherwise " + _other_voice_routes(exclude="piper")),
             )
         if tts.piper_model_path() is None:
             voices = data_paths.voices_dir()
@@ -569,7 +596,7 @@ async def _check_voice(timeout: float = DEFAULT_CHECK_TIMEOUT) -> Check:
             status=STATUS_FAIL,
             message="JARVIS_TTS_BACKEND=fish but FISH_API_KEY is not set.",
             remedy=("Get a Fish Audio API key from fish.audio and set FISH_API_KEY "
-                    "in .env, or drop JARVIS_TTS_BACKEND to use the local macOS voice."),
+                    "in .env. Otherwise " + _other_voice_routes(exclude="fish")),
         )
 
     if shutil.which("say") is None:
@@ -577,8 +604,8 @@ async def _check_voice(timeout: float = DEFAULT_CHECK_TIMEOUT) -> Check:
             name="voice",
             status=STATUS_FAIL,
             message="The local TTS backend needs `say`, which is not on PATH.",
-            remedy=("`say` ships with macOS; on anything else set FISH_API_KEY and "
-                    "JARVIS_TTS_BACKEND=fish in .env."),
+            remedy=("`say` ships with macOS and exists nowhere else, so on this "
+                    "machine: " + _other_voice_routes()),
         )
 
     wanted = tts.resolve_voice()
