@@ -118,20 +118,28 @@ const capture = createCapture(
   }
 );
 
-fetch("/api/settings/status")
+// A PROMISE, resolved before either recogniser is started — not a `stop()`
+// fired at load.
+//
+// The first attempt did stop the browser recogniser here, and it did nothing:
+// `voiceInput.start()` runs a second later from the kick-off below, so it
+// stopped something that had not started and then the timer started it again.
+// Both recognisers then ran at once and every sentence was transcribed twice,
+// by two engines, with different words. Seen live 2026-09-10:
+//
+//     stt(base.en): That I can then put into my table.
+//     User: That I can then put into my table.
+//     User: Pie charts. What would you like to do that I can then pull ...
+//
+// Whichever engine is going to listen, exactly one of them starts.
+const sttBackend: Promise<string> = fetch("/api/settings/status")
   .then((r) => r.json())
-  .then((s) => {
-    if (s?.stt_backend && s.stt_backend !== "browser") {
-      // Two recognisers listening at once would double every sentence, so
-      // the browser's is stood down before this one starts.
-      voiceInput.stop();
-      capture.start();
-    }
-  })
-  .catch(() => {
-    // The status endpoint being unreachable is not a reason to go deaf: the
-    // browser recogniser is already running and stays running.
-  });
+  .then((s) => (typeof s?.stt_backend === "string" ? s.stt_backend : "browser"))
+  // Unreachable status is not a reason to go deaf: fall back to the
+  // recogniser that needs no server-side anything.
+  .catch(() => "browser");
+
+const usingLocalStt = () => sttBackend.then((b) => b !== "browser");
 
 // A live meter for the microphone itself. If this moves when you speak, the
 // microphone is working — whatever else is or is not happening. It answers
@@ -152,7 +160,14 @@ const micMonitor = createMicMonitor(
     // Proven deaf: sound going in, nothing coming out. Do not wait for the
     // rotation timer to happen along — measured once at 21 seconds, all of
     // it lost. Rebuild the recogniser now.
-    if (event.startsWith("DEAF")) voiceInput.restart("deaf: audio in, no results");
+    // Only when the browser IS the recogniser. With the local backend there
+    // is nothing here to rebuild, and rebuilding it would start the second
+    // ear this file exists to prevent.
+    if (event.startsWith("DEAF")) {
+      usingLocalStt().then((local) => {
+        if (!local) voiceInput.restart("deaf: audio in, no results");
+      });
+    }
   }
 );
 
@@ -239,9 +254,11 @@ socket.onMessage((msg) => {
 // Kick off
 // ---------------------------------------------------------------------------
 
-// Start listening after a brief delay for the orb to render
-setTimeout(() => {
-  voiceInput.start();
+// Start listening after a brief delay for the orb to render — with whichever
+// ear the server actually has. Awaited, so the two can never both start.
+setTimeout(async () => {
+  if (await usingLocalStt()) capture.start();
+  else voiceInput.start();
   if (currentState !== "speaking") transition("listening");
 }, 1000);
 

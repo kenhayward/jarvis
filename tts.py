@@ -152,9 +152,28 @@ def piper_bin() -> Optional[str]:
     override = (os.getenv("JARVIS_PIPER_BIN") or "").strip()
     if override:
         return override if os.path.exists(override) else shutil.which(override)
-    beside = Path(sys.executable).parent / "piper"
-    if beside.exists():
-        return str(beside)
+    # Both names, on every platform, and NOT `Path(...) / "piper"` alone.
+    # The console script pip writes is named for the platform: `piper` on
+    # POSIX, `piper.exe` on Windows. Testing only the bare name finds nothing
+    # there, and the PATH fallback below cannot rescue it because
+    # `.venv\Scripts` is not on PATH — which is the whole reason this looks
+    # beside the interpreter at all.
+    #
+    # Measured 2026-09-10 on a Windows box with piper installed and its voice
+    # downloaded: `piper_bin()` returned None, `backends_ready()` reported
+    # piper unavailable, and JARVIS was mute on the one platform that has no
+    # `say` to fall back to. It was found by RUNNING the product; nothing in
+    # the suite could have caught it, because the suite never looks for a real
+    # piper.
+    #
+    # Trying both names rather than branching on `os.name`: the list is two
+    # items, the wrong one simply does not exist, and this file has no
+    # business knowing which platform it is on.
+    directory = Path(sys.executable).parent
+    for candidate in ("piper", "piper.exe"):
+        beside = directory / candidate
+        if beside.is_file():
+            return str(beside)
     return shutil.which("piper")
 
 

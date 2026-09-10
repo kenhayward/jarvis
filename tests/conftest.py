@@ -149,6 +149,31 @@ def _never_touch_the_real_projects_folder(monkeypatch, tmp_path):
     monkeypatch.setenv("JARVIS_PROJECTS_DIR", str(tmp_path / "projects-root"))
 
 
+# Settings a developer may legitimately have in their own `.env` that would
+# change what the suite is testing. `server.py` loads `.env` into `os.environ`
+# at IMPORT, so these arrive before any fixture runs and no amount of pointing
+# JARVIS_ENV_FILE somewhere else undoes them — that rail is about WRITES.
+#
+# Found by running the product: setting JARVIS_STT_BACKEND=whisper for a live
+# test broke three tests that assert the default is `browser`. The tests were
+# right and the isolation was missing, which is the more useful half — anyone
+# who actually uses the local backend would have hit this on every run.
+_DEVELOPER_PREFERENCES = ("JARVIS_STT_BACKEND", "JARVIS_STT_MODEL",
+                          "JARVIS_TTS_BACKEND", "JARVIS_TTS_VOICE",
+                          "JARVIS_PIPER_VOICE", "JARVIS_PIPER_BIN")
+
+
+@pytest.fixture(autouse=True)
+def _the_developers_own_preferences_do_not_reach_the_suite(monkeypatch):
+    """A test asserts what JARVIS does by default, not what this machine does.
+
+    A test that wants one of these still sets it itself — the same rule the
+    data-dir and dotenv rails follow.
+    """
+    for name in _DEVELOPER_PREFERENCES:
+        monkeypatch.delenv(name, raising=False)
+
+
 @pytest.fixture(autouse=True)
 def _never_write_to_the_live_dotenv(monkeypatch, tmp_path):
     """No test may write into the developer's live `.env`.
