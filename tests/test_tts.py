@@ -469,3 +469,73 @@ def test_piper_is_found_beside_the_interpreter_that_installed_it(tmp_path, monke
         f"pip installed {name!r} beside the interpreter and piper_bin() "
         f"could not see it")
     assert Path(found).name == name
+
+
+# --- punctuation the synthesiser would read ALOUD --------------------------
+
+def test_an_em_dash_does_not_survive_to_the_synthesiser():
+    r"""Measured 2026-09-10 with piper/en_GB-alan-medium, and reported by the
+    user as JARVIS "sometimes saying circumflex":
+
+        "a b"      0.65s
+        "a - b"    0.62s   hyphen: silent, as it should be
+        "a, b"     0.96s   comma: a small pause
+        "a \u2014 b"    2.18s   em dash: +1.56s of SPEECH
+
+    An em dash is prosody, not a word. JARVIS's persona is built on them, so
+    this was happening in most sentences he spoke.
+    """
+    import tts
+    out = tts.speakable("Three conversations, sir \u2014 two in alloy works.")
+    assert "\u2014" not in out
+    assert "alloy works" in out and "Three conversations" in out
+
+
+def test_an_en_dash_goes_too():
+    """Measured at 5.11s against the em dash's 5.10s in the same sentence —
+    the same defect, and it would be odd to fix one and not the other."""
+    import tts
+    assert "\u2013" not in tts.speakable("sir \u2013 two")
+
+
+def test_a_dash_becomes_a_PAUSE_not_nothing():
+    """"sir, two" and not "sir two". The dash is doing prosodic work in the
+    sentence and deleting it runs two clauses together."""
+    import tts
+    assert tts.speakable("sir \u2014 two") == "sir, two"
+    # And no doubled punctuation when the author already had a comma.
+    assert tts.speakable("sir, \u2014 two") == "sir, two"
+
+
+def test_the_other_characters_a_persona_full_of_typography_produces():
+    """Curly quotes, an ellipsis and a non-breaking space all reach the
+    synthesiser from ordinary model prose."""
+    import tts
+    out = tts.speakable("It\u2019s \u201cdone\u201d\u2026 sir\u00a0now")
+    for ch in ("\u2019", "\u201c", "\u201d", "\u2026", "\u00a0"):
+        assert ch not in out, ch
+    # Converted, not deleted. A STRAIGHT quote is silent where a curly one is
+    # not, and removing quotation marks would change the sentence rather than
+    # how it is read.
+    assert out == 'It\'s "done"... sir now'
+
+
+def test_ordinary_text_is_left_exactly_alone():
+    """The common case must not be paying for this."""
+    import tts
+    for text in ("Three conversations running, sir.",
+                 "Nothing needs you - all running.",
+                 "Done."):
+        assert tts.speakable(text) == text
+
+
+def test_hyphenated_words_are_not_touched():
+    """`alloy-works` is a project name and a hyphen is not a dash."""
+    import tts
+    assert tts.speakable("alloy-works is idle") == "alloy-works is idle"
+
+
+def test_it_survives_nothing():
+    import tts
+    assert tts.speakable("") == ""
+    assert tts.speakable(None) == ""

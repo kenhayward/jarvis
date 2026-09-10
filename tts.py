@@ -103,6 +103,61 @@ class SynthResult:
     backend: str = BACKEND_SAY
 
 
+# Typography a language model writes, and what a synthesiser does with it.
+#
+# Measured 2026-09-10 with piper / en_GB-alan-medium, after the user reported
+# JARVIS "sometimes saying circumflex":
+#
+#     "a b"       0.65s
+#     "a - b"     0.62s    a hyphen is silent, as it should be
+#     "a, b"      0.96s    a comma is a small pause
+#     "a — b"     2.18s    an em dash is +1.56s of SPEECH
+#
+# An em dash is PROSODY, not a word, and JARVIS's persona is built on them —
+# so this was happening in most sentences he spoke. Nothing normalised text
+# before synthesis; `tts.py` and `speech.py` only stripped it.
+#
+# Mapped to a comma rather than deleted: the dash is doing real work in the
+# sentence, and removing it runs two clauses together. A comma is the closest
+# thing a synthesiser reliably renders as a pause.
+_SPEAKABLE = {
+    "—": ",",   # em dash
+    "–": ",",   # en dash
+    "…": "...",  # ellipsis -> three stops, which every backend handles
+    "’": "'",   # right single quote, the apostrophe a model actually writes
+    "‘": "'",
+    "“": '"',
+    "”": '"',
+    " ": " ",   # non-breaking space
+    "­": "",    # soft hyphen: invisible, and read aloud by some voices
+}
+
+# ", ," and ",," from a dash the author had already punctuated around.
+_DOUBLED = re.compile(r",\s*,+")
+_SPACE_BEFORE_COMMA = re.compile(r"\s+,")
+
+
+def speakable(text: Optional[str]) -> str:
+    """`text` with typography a synthesiser would read ALOUD turned into
+    punctuation it renders as prosody.
+
+    Applied to every backend rather than to piper alone: the characters are
+    wrong for a synthesiser in general, `say` and Fish were never measured
+    with them, and a sentence that sounds right in one voice and says
+    "circumflex" in another is worse than one rule.
+
+    Ordinary text is returned unchanged — checked by a test, because the cost
+    of this must fall on the sentences that need it and nothing else.
+    """
+    out = text or ""
+    for bad, good in _SPEAKABLE.items():
+        if bad in out:
+            out = out.replace(bad, good)
+    out = _SPACE_BEFORE_COMMA.sub(",", out)
+    out = _DOUBLED.sub(",", out)
+    return out
+
+
 def resolve_backend(backend: Optional[str] = None) -> str:
     """The backend to use: the argument, else JARVIS_TTS_BACKEND, else `say`.
 
@@ -239,7 +294,7 @@ async def synthesize_chunk(text: str, *, api_key: str = "", voice_id: str = "",
     a configured backend that fails hands over to `say` (see below), so it
     means macOS itself would not speak either.
     """
-    text = (text or "").strip()
+    text = speakable(text).strip()
     if not text:
         return None
     chosen = resolve_backend(backend)
