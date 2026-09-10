@@ -15,7 +15,7 @@ kept referring to as 4b/4c/4d without ever writing down.
 | 1 | Portability hygiene + a failing Windows CI job | Mac | **merged** (PR #3) |
 | 2 | The platform layer, macOS only | Mac | **merged** (PR #4) |
 | 3 | `jarvis_platform/windows/` — first Windows build | Windows | **code complete** 2026-09-09; CI gate deferred to after phase 4 |
-| 4 | [The speech sidecar](phase-4-speech.md) | Mac, verified on Windows | 4-zero, 4a, 4b **done** 2026-09-10; 4b overturned the boundary and promoted 4d |
+| 4 | [The speech sidecar](phase-4-speech.md) | Mac, verified on Windows | 4-zero, 4a, 4b **done** 2026-09-10; 4c next |
 | 5 | Electron shell, macOS first | Mac | not started — but see the TCC note below, learned in 4-zero |
 | 6 | Windows packaging and release | Windows | not started |
 | 7 | Optional: container / remote speech sidecar | either | not started |
@@ -165,15 +165,19 @@ Answered:
 
 1. **Phase 7, the container.** Costs nothing to skip; the protocol exists
    either way.
-2. ~~**Phase 4d, echo cancellation.**~~ **NO LONGER CUTTABLE, and it was
-   measurement that removed it from this list, 2026-09-10.** Recording twenty
-   utterances in a real room found that every candidate engine transcribes
-   JARVIS rather than the user during barge-in — twelve takes out of twelve,
-   and not because he was louder: in three of the four he was at or below the
-   user's own level. The user's interruption does not arrive mangled, it does
-   not arrive. So AEC is not polish on the existing heuristics; it is what
-   makes interruption work at all once transcription leaves the browser.
-   See [`phase-4-speech.md`](phase-4-speech.md).
+2. **Phase 4d, echo cancellation.** Still cuttable — and now for a better
+   reason than "the heuristics are ugly but tuned". **The browser already does
+   AEC, it is already on, and it works**: `voice.ts` requests
+   `getUserMedia({audio: true})`, which grants `echoCancellation: true`
+   (verified 2026-09-10, Chrome 152), and capturing through it while JARVIS
+   spoke transcribed the user with no trace of him. The existing heuristics
+   were therefore always working on AEC's residue rather than raw echo.
+
+   This entry was briefly rewritten to say the opposite, on a measurement that
+   captured raw microphone audio and so bypassed the product's own path. See
+   "How the boundary moved three times in one day" in
+   [`phase-4-speech.md`](phase-4-speech.md) — the mistake is worth more than
+   the conclusion.
 3. **`answer_dialog` on Windows.** See above.
 4. **Reading the active browser tab.** No clean Windows equivalent, low
    value. Already declared absent — the macOS `get_chrome_tab_info` was

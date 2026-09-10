@@ -191,29 +191,33 @@ whatever wins the bake-off, `JARVIS_STT_BACKEND` to choose, and a fallback to
 asked for exactly this — "keep `browser` as the default STT backend and
 document Chrome as a requirement for voice".
 
-### ~~Audio travels as base64 in a JSON message~~ — SUPERSEDED 2026-09-10
+### Audio travels as base64 in a JSON message
 
-This argued for one utterance per frame, base64 inside JSON, mirroring the
-existing audio-down message, and explicitly said: *"If continuous streaming is
-ever built, that is when a binary path earns its place — on a per-frame budget
-where the overhead actually matters."*
+One utterance per frame, base64 inside JSON, mirroring the existing audio-down
+message rather than introducing the codebase's first binary path.
 
-**4b forced continuous streaming (see 4d), so that condition is met and the
-conclusion flips.** A binary WebSocket path now earns its place. It will be
-the codebase's first in either direction, and `web_auth` gains a second frame
-shape to reason about — a real cost that was correctly weighed and is now
-worth paying, rather than one that was overlooked.
+One utterance at 16 kHz mono 16-bit is roughly 96 KB for three seconds, ~130 KB
+base64. The 33% overhead is real and it buys consistency with the only audio
+frame that already exists, one protocol shape instead of two, and nothing new
+for `web_auth` to reason about. If continuous streaming is ever built, that is
+when a binary path earns its place — on a per-frame budget where the overhead
+actually matters.
 
-### ~~Endpointing stays in the page~~ — SUPERSEDED 2026-09-10
+*This decision was reversed and restored on 2026-09-10. See "How the boundary
+moved three times in one day".*
 
-4-zero confirmed the page CAN do this: Web Audio survives Electron on both
-platforms, with a median of 13 against a floor of 1. The decision was sound on
-the evidence available.
+### Endpointing stays in the page
 
-**4b changed the evidence.** Acoustic echo cancellation needs the reference
-signal — the samples the server actually played — and it has to be applied
-BEFORE endpointing, or the endpointer segments on JARVIS's voice. So VAD and
-endpointing move server-side with the audio.
+4-zero confirmed the page can do this: Web Audio survives Electron on both
+platforms, with a median of 13 against a floor of 1.
+
+It is also where the audio already is, and — decisively — where the echo
+cancellation already is. The browser applies AEC to the capture before any
+consumer sees it, so a page-side endpointer is looking at *cleaned* audio,
+which is exactly what an endpointer needs.
+
+*This decision was reversed and restored on 2026-09-10. See "How the boundary
+moved three times in one day".*
 
 The measured behaviour of the endpointer being replaced is below, and it is
 the bar, not a starting point.
@@ -241,8 +245,8 @@ is architecturally cleaner.
 | **4-zero** | the spike, before any code | **DONE** 2026-09-10, both platforms |
 | **4a** | `stt.py`, settings reporting, the `voice.ts` message fix | **DONE** — `browser` still default, nothing user-visible changed |
 | **4b** | the bake-off, real mic and real room | **DONE** — SAPI eliminated; **overturned the boundary** |
-| **4c** | streaming audio, server-side VAD and endpointing | next, and larger than it was |
-| **4d** | echo cancellation | **REQUIRED**, promoted by 4b |
+| **4c** | the segment upload frame, and the engine behind it | next |
+| **4d** | echo cancellation | **cuttable** — the browser already does it, verified on the product's path |
 
 ### 4-zero — the spike — **DONE 2026-09-10 on Windows**
 
@@ -386,97 +390,113 @@ reference and therefore a real word error rate rather than somebody preferring
 one transcript to another. Read speech flatters every candidate equally, so
 the RANKING holds; the absolute figures do not.
 
-### 4c — the streaming audio path, and the engine behind it
+### 4c — the segment upload frame, and the engine behind it
 
-**Rewritten 2026-09-10.** This used to read "adopt the winner", which assumed
-the audio was already arriving. After 4d it is the larger half of the phase:
+* the **audio-in frame**, page -> server, one utterance as base64 in a JSON
+  message. Deferred out of 4a for having no caller; 4c is the caller.
+* **page-side endpointing** via Web Audio, judged against Chrome's endpointer
+  on the cases `speech.py` records — not against a clean-room notion of
+  correct. It works on audio the browser has already echo-cancelled.
+* the **server raising `transcript` itself** when the backend is not `browser`
+* the winning **engine** as a real backend behind `stt.py`, its dependency
+  argued in the commit message
 
-* a **binary** WebSocket frame, page -> server, carrying audio continuously —
-  the codebase's first in either direction, and now justified on a per-frame
-  budget (see the superseded section above)
-* **server-side VAD and endpointing**, judged against Chrome's endpointer on
-  the cases `speech.py` records, not against a clean-room notion of correct
-* **AEC before endpointing**, or the endpointer segments on JARVIS's voice —
-  which is the whole finding of 4b
-* the winning engine as a real backend behind `stt.py`, its dependency argued
-  in the commit message
+Electron is unblocked at the end of this.
 
-Electron is unblocked at the end of this, not the start.
+**Choose the engine against this shape, not against 4b's table.** 4b measured
+whole utterances on raw audio; the real input is one echo-cancelled utterance
+at a time, which is closer, but the candidates should be re-scored on the
+recordings in `.agents/stt-bakeoff-2026-09-10/` once captured the product's
+way. `base.en` at 0.41s versus `small.en` at 1.01s is a real choice and 4b's
+own numbers say the smaller model is better at short words while the larger
+one is better at project names.
 
-**Re-run the engine comparison against the streaming shape before choosing.**
-4b measured whole utterances; streaming has a per-frame budget, and `base.en`
-being 2.4x faster than `small.en` may matter more, or less, than it did. The
-4b numbers are a starting point and not a verdict.
+**Still unanswered: whisper.cpp.** CLAUDE.md prefers a subprocess to a
+package, and the subprocess candidate was never tested because it means
+downloading and running an executable from a GitHub release. `faster-whisper`
+is currently winning by default rather than on merit, and that should be
+settled before it is adopted rather than after.
 
-### 4d — echo cancellation: REQUIRED. Promoted 2026-09-10 by measurement.
+### 4d — echo cancellation: CUTTABLE, and it took three attempts to be sure
 
-**This section used to say "out of scope, and deliberately". 4b proved that
-wrong, and the reversal is the most important thing in this document.**
+**The browser already does this, it is already switched on, and it already
+works.** Measured 2026-09-10 on the product's own capture path.
 
-Twenty utterances were recorded through a real microphone in a real room, four
-of them spoken over JARVIS's own voice through the speakers. Every engine
-tested — `faster-whisper base.en`, `faster-whisper small.en`, and Windows SAPI
-— transcribed **JARVIS instead of the user, in all four takes. Twelve out of
-twelve.**
+`frontend/src/voice.ts:104` requests `getUserMedia({ audio: true })`, and that
+grants — verified, not assumed, Chrome 152:
 
-    take   WER vs the user's words   WER vs JARVIS's words
-    17            3.00                      0.47
-    18           10.00                      0.41
-    19            2.75                      0.41
-    20            6.00                      0.20
+    echoCancellation = true
+    noiseSuppression = true
+    autoGainControl  = true
 
-The user's interruption did not come back mangled. **It did not come back at
-all.**
+Capturing through that path while JARVIS spoke, and transcribing the result:
 
-**It is not a volume artefact, and that was checked rather than assumed.** The
-user's voice alone peaks 2473-3281. JARVIS's level in takes 18, 19 and 20 was
-2399, 2088 and 1560 — at or BELOW the user's own voice — and the engines still
-transcribed him. Only take 17 (8218) was genuinely loud. The mechanism is not
-loudness, it is duration and continuity: these models settle on the longest
-fluent speaker, and in a real barge-in that is always JARVIS. The user's
-interruption is two words; his sentence is twenty.
+    AEC on   rms 412   "It's me talking over here."          <- the user, no JARVIS
+    AEC off  rms 677   "Found it. This is me talking a title
+                        on the staging branch."               <- JARVIS bleeding in
 
-**What that costs, precisely.** Today Chrome returns the user's words MIXED
-with echo, which is exactly why `speech.py` has `ECHO_SHARE_WHILE_AUDIBLE`,
-`SHORT_ECHO_GRACE_SEC` and the stem rule — the user's words do arrive, dirty.
-With segment-based local STT they stop existing as text. What arrives instead
-is a clean transcript of JARVIS's own sentence, presented as though the user
-had said it. The existing heuristics would very likely catch that — the
-overlap with what he just said is total — so the rail holds and nothing
-dangerous reaches the brain. But **barge-in stops working**, and that is a
-capability the product has today.
+Both models agreed. AEC removed roughly 40% of the captured energy — the
+far-end signal — and with it, JARVIS.
 
-So echo cancellation is not polish. It is what makes interruption possible at
-all once transcription moves off the browser, and AEC needs the server to know
-exactly which samples it played and when.
+**It sits upstream of every design choice below**, so the server never needs
+its own AEC and never needs the reference signal. That is true whether audio
+leaves the page as segments or as a stream, which is why this no longer
+constrains the boundary at all.
 
-**Therefore the boundary moves: segments -> continuous streaming**, with
-server-side VAD and endpointing, which is the option this document weighed and
-rejected this morning. Consequences, stated so the reversal is not silently
-absorbed:
+So the heuristics in `speech.py` stay as they are — and their existence is
+now better understood rather than merely tolerated. They run on audio that
+has ALREADY been echo-cancelled, which means they were always handling AEC's
+RESIDUE, not raw echo. That is a much more modest job than it looked, and it
+explains why they are a pile of tuned thresholds rather than a signal
+processing stage.
 
-* the audio frame becomes a per-frame budget, so **a binary WebSocket path now
-  earns its place** — the base64-in-JSON argument was explicitly conditional on
-  one utterance at a time, and that condition is gone
-* the page becomes a microphone and a speaker; VAD and endpointing move server
-  side and must be judged against Chrome's tuned endpointer, whose measured
-  behaviour is recorded above
-* `speech.py`'s echo heuristics can eventually be RETIRED rather than
-  preserved, which was 4d's original promise and is now back on the table
-* phase 4 is substantially larger than it was this morning
+**What is NOT established.** The AEC test used a longer interruption than 4b's
+`"stop"` and `"cancel that"`. Short interruptions are the harder case — less
+for the recogniser to hold on to, more chance the residue dominates — and that
+case has not been measured through the browser path. If barge-in ever feels
+unreliable in practice, that is the experiment to run, and 4b's recordings in
+`.agents/stt-bakeoff-2026-09-10/` are the reference to run it against.
 
-**4a survives untouched**, and one decision in it looks much better in
-hindsight: the audio-in frame was deferred out of 4a for having no caller.
-Had it shipped, it would have shipped the wrong shape. `stt.py`, the settings
-reporting and the `voice.ts` message fix are all boundary-agnostic.
+## How the boundary moved three times in one day
 
-**A lesson about falsifiability lists.** This document ends with "What would
-make this design wrong" and names three things. **None of them is what
-happened.** The list was honest and it was incomplete, because it could only
-contain failures that had been imagined. What actually overturned the design
-was a measurement nobody had thought to take — which is the same shape as
-every other correction in this port, and an argument for running the cheap
-experiment even when the design looks settled.
+Kept in full, because the mistake is more instructive than the answer and
+tidying it away would leave the next reader unable to see why the rule at the
+end of this section exists.
+
+**1. Segments (morning).** Electron keeps `getUserMedia` and Web Audio and
+loses only the Google speech service, so capture and endpointing can stay in
+the page and only transcription needs to move. Sound reasoning, and it is
+where this document ended up.
+
+**2. Streaming (afternoon).** 4b recorded twenty utterances and found every
+engine transcribing JARVIS rather than the user in all four barge-in takes.
+Barge-in appeared to be lost, so echo cancellation was promoted from cuttable
+to required — and AEC needs the reference signal, which segments cannot
+provide. The boundary moved to continuous streaming and phase 4 roughly
+doubled.
+
+**3. Segments again (evening).** 4b's harness captured with `sounddevice` — a
+RAW MICROPHONE TAP. The product captures through `getUserMedia`, which applies
+AEC before any consumer sees a sample. **The measurement was of a path this
+product never uses.** Re-run through the browser, the same scenario transcribes
+the user and not JARVIS.
+
+**The rule that comes out of it, and it is not "measure more".**
+
+The whole port has been repeating "measure, do not assume", and 4b DID measure
+— carefully, with guards for muted output and clipping, in a real room with a
+real microphone. It still produced a conclusion that reversed a design
+decision and was wrong.
+
+**A measurement must go through the product's own path, or it measures
+something else.** `sounddevice` was the convenient way to reach the
+microphone; `getUserMedia` was the correct one, because it is what JARVIS
+uses. The convenient tool and the correct tool were different, and nothing in
+the result could reveal it — the recordings were real, the levels were good,
+the guards all passed, and the numbers were wrong.
+
+Ask of any harness: *does the signal reach it the way it reaches
+production?* If not, it is measuring a neighbour of the thing you care about.
 
 ## What would make this design wrong
 
