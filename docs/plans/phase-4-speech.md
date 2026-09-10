@@ -191,22 +191,32 @@ whatever wins the bake-off, `JARVIS_STT_BACKEND` to choose, and a fallback to
 asked for exactly this — "keep `browser` as the default STT backend and
 document Chrome as a requirement for voice".
 
-### Audio travels as base64 in a JSON message
+### ~~Audio travels as base64 in a JSON message~~ — SUPERSEDED 2026-09-10
 
-A new client→server frame carrying one utterance, mirroring the existing
-audio-down frame rather than introducing the codebase's first binary path.
+This argued for one utterance per frame, base64 inside JSON, mirroring the
+existing audio-down message, and explicitly said: *"If continuous streaming is
+ever built, that is when a binary path earns its place — on a per-frame budget
+where the overhead actually matters."*
 
-One utterance at 16 kHz mono 16-bit is roughly 96 KB for three seconds, ~130 KB
-base64. The 33% overhead is real and it buys consistency with the only audio
-frame that already exists, one protocol shape instead of two, and nothing new
-for `web_auth` to reason about. If continuous streaming is ever built, that is
-when a binary path earns its place — on a per-frame budget where the overhead
-actually matters.
+**4b forced continuous streaming (see 4d), so that condition is met and the
+conclusion flips.** A binary WebSocket path now earns its place. It will be
+the codebase's first in either direction, and `web_auth` gains a second frame
+shape to reason about — a real cost that was correctly weighed and is now
+worth paying, rather than one that was overlooked.
 
-### Endpointing stays in the page
+### ~~Endpointing stays in the page~~ — SUPERSEDED 2026-09-10
 
-Chrome's endpointer decides where an utterance ends today, and Web Audio can
-do the same job in an Electron renderer — **subject to the 4-zero spike**.
+4-zero confirmed the page CAN do this: Web Audio survives Electron on both
+platforms, with a median of 13 against a floor of 1. The decision was sound on
+the evidence available.
+
+**4b changed the evidence.** Acoustic echo cancellation needs the reference
+signal — the samples the server actually played — and it has to be applied
+BEFORE endpointing, or the endpointer segments on JARVIS's voice. So VAD and
+endpointing move server-side with the audio.
+
+The measured behaviour of the endpointer being replaced is below, and it is
+the bar, not a starting point.
 
 `speech.py` records the measured behaviour of the current endpointer, and any
 replacement is judged against these, not against a clean-room notion of
@@ -225,6 +235,14 @@ exists. A replacement endpointer that regresses them is a downgrade even if it
 is architecturally cleaner.
 
 ## Sub-phases
+
+| | | state |
+|---|---|---|
+| **4-zero** | the spike, before any code | **DONE** 2026-09-10, both platforms |
+| **4a** | `stt.py`, settings reporting, the `voice.ts` message fix | **DONE** — `browser` still default, nothing user-visible changed |
+| **4b** | the bake-off, real mic and real room | **DONE** — SAPI eliminated; **overturned the boundary** |
+| **4c** | streaming audio, server-side VAD and endpointing | next, and larger than it was |
+| **4d** | echo cancellation | **REQUIRED**, promoted by 4b |
 
 ### 4-zero — the spike — **DONE 2026-09-10 on Windows**
 
@@ -313,25 +331,152 @@ itself and that a subprocess is preferred to a package:
 **This phase needs the user.** Latency and footprint can be measured alone;
 whether an engine hears *this person in this room* cannot.
 
-### 4c — adopt the winner
+#### DONE 2026-09-10. What was run, and what it found
 
-The winning engine becomes a real backend behind `stt.py`, with its dependency
-argued in the commit message. Electron is unblocked at this point.
+Twenty utterances through a Yeti Nano in a real room — five ordinary
+commands, five carrying project names, six single words, and four spoken over
+JARVIS's own piper voice out of a separate speaker, so the echo path is
+speakers -> room -> mic rather than a loopback.
 
-### 4d — echo cancellation: OUT OF SCOPE, and deliberately
+**The headline is in 4d: every engine transcribed JARVIS rather than the user
+in every echo take, and that overturned the design.** The rest is the engine
+comparison it was run for.
 
-Acoustic echo cancellation needs the server to know exactly which samples it
-played and when. **The segment boundary does not provide that**, and that was
-the acknowledged cost of choosing it.
+    condition   base.en   small.en   SAPI
+    control        0.00       0.00   0.32
+    domain         0.15       0.10   0.48
+    short          0.00       0.17   0.33
 
-So the heuristics in `speech.py` — `_echo_share`, `_is_stem_echo`,
-`ECHO_SHARE_WHILE_AUDIBLE`, `SHORT_ECHO_GRACE_SEC`, the four-character stem
-rule — all stay exactly as they are. `cross-platform-port.md` already lists
-this first on its cut-list and calls them "ugly but tuned"; nothing downstream
-depends on removing them.
+    key words      4/5        5/5     1/5     (the ones that reach a tool)
+    latency       0.41s      1.01s   0.28s    (median, transcription only)
+    model load     4.1s       8.0s      -
 
-Revisit only if the driver changes from Electron to voice quality, which would
-also change the boundary decision in 4a.
+**Windows SAPI is out.** Free, built in, no download, fastest — and it heard
+"voice backend" as "Boris Becker" and "show me the last run" as "and nor does
+fortune in the last run". 1 of 5 tool arguments survived. That is not a trade
+at any price, and it is worth having measured rather than assumed: this port
+has been wrong about "obvious" often enough.
+
+**Between the two whisper models there is a genuine split**, and it is not
+"bigger is better":
+
+* `small.en` is the only engine that got **every** tool-argument word,
+  including `chitauri`. Those matter out of proportion: a mangled project name
+  is a failed action.
+* `base.en` was **perfect on all six single words** where `small.en` heard
+  "now" as "No" — and single words are what the endpointer hands over alone.
+* `base.en` is 2.4x faster (0.41s vs 1.01s per utterance).
+
+Not resolved here, because the boundary change in 4d moves the goalposts: with
+continuous streaming the latency budget is per-frame rather than per-utterance,
+and the comparison should be re-run against that. Recorded so the re-run starts
+from evidence.
+
+**What this bake-off did NOT test.** `whisper.cpp` as a subprocess — the
+candidate that best matches CLAUDE.md's "prefer a subprocess to a package" —
+was left out because it means downloading and running an executable from a
+GitHub release, which was not agreed. **So the subprocess-versus-package
+question is still open**, and a package (`faster-whisper`, 160 MB of
+site-packages measured as the marginal cost on top of piper) is currently
+winning by default rather than on merit.
+
+**And the numbers are optimistic.** These are prompted phrases, which is read
+speech, which is easier than spontaneous speech. The prompts bought a known
+reference and therefore a real word error rate rather than somebody preferring
+one transcript to another. Read speech flatters every candidate equally, so
+the RANKING holds; the absolute figures do not.
+
+### 4c — the streaming audio path, and the engine behind it
+
+**Rewritten 2026-09-10.** This used to read "adopt the winner", which assumed
+the audio was already arriving. After 4d it is the larger half of the phase:
+
+* a **binary** WebSocket frame, page -> server, carrying audio continuously —
+  the codebase's first in either direction, and now justified on a per-frame
+  budget (see the superseded section above)
+* **server-side VAD and endpointing**, judged against Chrome's endpointer on
+  the cases `speech.py` records, not against a clean-room notion of correct
+* **AEC before endpointing**, or the endpointer segments on JARVIS's voice —
+  which is the whole finding of 4b
+* the winning engine as a real backend behind `stt.py`, its dependency argued
+  in the commit message
+
+Electron is unblocked at the end of this, not the start.
+
+**Re-run the engine comparison against the streaming shape before choosing.**
+4b measured whole utterances; streaming has a per-frame budget, and `base.en`
+being 2.4x faster than `small.en` may matter more, or less, than it did. The
+4b numbers are a starting point and not a verdict.
+
+### 4d — echo cancellation: REQUIRED. Promoted 2026-09-10 by measurement.
+
+**This section used to say "out of scope, and deliberately". 4b proved that
+wrong, and the reversal is the most important thing in this document.**
+
+Twenty utterances were recorded through a real microphone in a real room, four
+of them spoken over JARVIS's own voice through the speakers. Every engine
+tested — `faster-whisper base.en`, `faster-whisper small.en`, and Windows SAPI
+— transcribed **JARVIS instead of the user, in all four takes. Twelve out of
+twelve.**
+
+    take   WER vs the user's words   WER vs JARVIS's words
+    17            3.00                      0.47
+    18           10.00                      0.41
+    19            2.75                      0.41
+    20            6.00                      0.20
+
+The user's interruption did not come back mangled. **It did not come back at
+all.**
+
+**It is not a volume artefact, and that was checked rather than assumed.** The
+user's voice alone peaks 2473-3281. JARVIS's level in takes 18, 19 and 20 was
+2399, 2088 and 1560 — at or BELOW the user's own voice — and the engines still
+transcribed him. Only take 17 (8218) was genuinely loud. The mechanism is not
+loudness, it is duration and continuity: these models settle on the longest
+fluent speaker, and in a real barge-in that is always JARVIS. The user's
+interruption is two words; his sentence is twenty.
+
+**What that costs, precisely.** Today Chrome returns the user's words MIXED
+with echo, which is exactly why `speech.py` has `ECHO_SHARE_WHILE_AUDIBLE`,
+`SHORT_ECHO_GRACE_SEC` and the stem rule — the user's words do arrive, dirty.
+With segment-based local STT they stop existing as text. What arrives instead
+is a clean transcript of JARVIS's own sentence, presented as though the user
+had said it. The existing heuristics would very likely catch that — the
+overlap with what he just said is total — so the rail holds and nothing
+dangerous reaches the brain. But **barge-in stops working**, and that is a
+capability the product has today.
+
+So echo cancellation is not polish. It is what makes interruption possible at
+all once transcription moves off the browser, and AEC needs the server to know
+exactly which samples it played and when.
+
+**Therefore the boundary moves: segments -> continuous streaming**, with
+server-side VAD and endpointing, which is the option this document weighed and
+rejected this morning. Consequences, stated so the reversal is not silently
+absorbed:
+
+* the audio frame becomes a per-frame budget, so **a binary WebSocket path now
+  earns its place** — the base64-in-JSON argument was explicitly conditional on
+  one utterance at a time, and that condition is gone
+* the page becomes a microphone and a speaker; VAD and endpointing move server
+  side and must be judged against Chrome's tuned endpointer, whose measured
+  behaviour is recorded above
+* `speech.py`'s echo heuristics can eventually be RETIRED rather than
+  preserved, which was 4d's original promise and is now back on the table
+* phase 4 is substantially larger than it was this morning
+
+**4a survives untouched**, and one decision in it looks much better in
+hindsight: the audio-in frame was deferred out of 4a for having no caller.
+Had it shipped, it would have shipped the wrong shape. `stt.py`, the settings
+reporting and the `voice.ts` message fix are all boundary-agnostic.
+
+**A lesson about falsifiability lists.** This document ends with "What would
+make this design wrong" and names three things. **None of them is what
+happened.** The list was honest and it was incomplete, because it could only
+contain failures that had been imagined. What actually overturned the design
+was a measurement nobody had thought to take — which is the same shape as
+every other correction in this port, and an argument for running the cheap
+experiment even when the design looks settled.
 
 ## What would make this design wrong
 
@@ -340,13 +485,30 @@ Stated plainly, so it is falsifiable:
 * ~~**4-zero finds `getUserMedia` or Web Audio broken in Electron.**~~
   **Ruled out on BOTH platforms, 2026-09-10.** Both work; the medians are
   identical. This one is closed.
-* **A page-side VAD cannot match Chrome's endpointer** on the cases
-  `speech.py` documents. Then endpointing has to move server-side even though
-  capture does not, which is an awkward middle the current design avoids.
-* **The bake-off disappoints on accuracy.** `cross-platform-port.md` already
-  has the answer: keep `browser` as the default and document Chrome as a
-  requirement for voice. Everything in 4a survives that outcome, which is
-  another reason it ships inert.
+* ~~**A page-side VAD cannot match Chrome's endpointer.**~~ **Moot from
+  2026-09-10.** Endpointing moved server-side anyway, for a different reason
+  (4d). The bar it must clear is unchanged and is stated above.
+* **The bake-off disappoints on accuracy.** Partly answered: on clean speech
+  it does not — `small.en` scored 0.00 on ordinary commands and got every
+  tool-argument word. `cross-platform-port.md`'s fallback answer (keep
+  `browser` as the default, document Chrome as a requirement for voice) is
+  still the right one if the streaming rebuild disappoints, and everything in
+  4a survives that outcome.
+
+**And the honest entry: none of the three above is what happened.**
+
+The design was overturned on 2026-09-10 by something not on this list — every
+engine transcribing JARVIS instead of the user under barge-in. The list was
+written in good faith and it was incomplete, because a falsifiability list can
+only contain failures somebody already imagined. What broke this design was a
+measurement nobody had thought to take.
+
+That is the same shape as every other correction in this port: the
+`create_subprocess_exec` belief, the launcher's fallback, the muted speaker on
+the macOS spike, the 16 tests skipping in silence. **The lesson is not "write
+a better list." It is to run the cheap experiment even when the design looks
+settled** — and to distrust a list of risks in proportion to how comfortable
+it feels.
 
 ## Rules carried from phase 3
 
