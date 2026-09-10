@@ -5,18 +5,20 @@ sequenced so every phase lands on its own and nothing is load-bearing until
 the thing before it works.
 
 Companion documents: [`windows-handoff.md`](windows-handoff.md), the live
-working reference while the work spans two machines, and
-[`phase-4-speech.md`](phase-4-speech.md), which is the design this document
-kept referring to as 4b/4c/4d without ever writing down.
+working reference while the work spans two machines;
+[`phase-4-speech.md`](phase-4-speech.md), the design this document kept
+referring to as 4b/4c/4d without ever writing down; and
+[`phase-5-electron.md`](phase-5-electron.md), which departs from the ordering
+below in two ways it states up front.
 
 | # | Phase | Runs on | Status |
 |---|-------|---------|--------|
 | 0 | Spikes — measure, decide, no production code | Mac + Windows | partly done, the Windows half outstanding |
 | 1 | Portability hygiene + a failing Windows CI job | Mac | **merged** (PR #3) |
 | 2 | The platform layer, macOS only | Mac | **merged** (PR #4) |
-| 3 | `jarvis_platform/windows/` — first Windows build | Windows | **code complete** 2026-09-09; CI gate deferred to after phase 4 |
-| 4 | [The speech sidecar](phase-4-speech.md) | Mac, verified on Windows | 4-zero, 4a, 4b **done** 2026-09-10; 4c next |
-| 5 | Electron shell, macOS first | Mac | not started — but see the TCC note below, learned in 4-zero |
+| 3 | `jarvis_platform/windows/` — first Windows build | Windows | **code complete** 2026-09-09; the CI gate deferral has now come DUE — blocked on issue #36 |
+| 4 | [The speech sidecar](phase-4-speech.md) | Mac, verified on Windows | **DONE** 2026-09-10 — 4-zero, 4a, 4b, 4c; 4d cuttable |
+| 5 | [The Electron application](phase-5-electron.md) | **Windows first**, by decision | **designed** 2026-09-10 |
 | 6 | Windows packaging and release | Windows | not started |
 | 7 | Optional: container / remote speech sidecar | either | not started |
 
