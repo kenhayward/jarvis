@@ -18,7 +18,7 @@ docs/plans/cross-platform-port.md for why the phases are ordered as they
 are. CLAUDE.md is the standing guidance for the repo.
 
 Where things stand: PHASE 3'S CODE IS DONE. Windows runs the same suite
-green on a real box (2512 passed, 78 skipped) and withdraws exactly one
+green on a real box (2542 passed, 60 skipped) and withdraws exactly one
 tool (answer_dialog, permanently and by decision). The platform layer
 (jarvis_platform/) is the only place that knows what a machine can do.
 
@@ -52,9 +52,22 @@ moving. DO NOT remove it as a tidy-up. When the time comes, check the JOB
 and not the run's conclusion — a green tick can hold a red Windows leg
 inside it.
 
-So the next real work is phase 4: server-side speech recognition. See
-cross-platform-port.md — it is the blocker for Electron and it improves
-macOS at the same time by retiring the echo heuristics in speech.py.
+So the next real work is phase 4: server-side speech recognition. It is
+DESIGNED but not started — read docs/plans/phase-4-speech.md, which is the
+document cross-platform-port.md kept referring to as 4b/4c/4d without ever
+writing.
+
+4-zero, the spike it opens with, is DONE on both platforms (2026-09-10).
+The premise holds: Electron deletes transcription and leaves the microphone
+and Web Audio intact. But note HOW it is true — webkitSpeechRecognition is
+DEFINED there and fails at runtime with error=network, so the obvious
+feature check reports everything fine. Never feature-detect this.
+
+Three traps came out of that spike and they are written up in
+phase-4-speech.md. The one that matters beyond phase 4: on macOS,
+setPermissionRequestHandler is NOT sufficient — TCC is a second gate needing
+NSMicrophoneUsageDescription and askForMediaAccess, and it fails looking
+exactly like the first one. Phase 5 will hit that.
 
 Some ground rules this port has been run under, which matter more than usual
 here:
@@ -112,7 +125,19 @@ Two corrections to the handoff's setup section, from doing it again on
 - **`py -3.12` may not resolve at all.** On this box `py` answers 3.14 and
   PATH answers 3.13; there is no 3.12. Build the venv from an absolute
   path — `C:\Program Files\Python313\python.exe` — and 3.13 runs the suite
-  clean (2512 passed).
+  clean.
+- **A local Windows run is short unless you set the box up for it.** Two
+  separate gaps, both found by quoting numbers that were wrong:
+  `tests/test_dashboard_page.py` skips in full without `frontend/node_modules`
+  and chromium (16 tests), and 14 CONTAINMENT tests skip without symlink
+  privilege — turn on Developer Mode. Plus ripgrep for one more. Quote the
+  skip count next to the pass count, always; a skipped test is invisible, not
+  green.
+- **Two Windows tests are flaky in CI** (a speech-chain race and a screen
+  capture) — same commit passed and failed minutes apart. Do NOT dismiss the
+  screen one as "CI cannot photograph a desktop": that would fail every time,
+  and it does not. They are the concrete blocker on removing
+  continue-on-error.
 - The repo now HAS a `.gitattributes` pinning `* text=auto eol=lf`, so the
   CRLF hazard the handoff warns about is closed. Read that file's comment
   before touching it; the template hashes depend on it.

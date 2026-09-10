@@ -4,8 +4,10 @@ Taking JARVIS from a macOS-only assistant to one that runs on Windows too,
 sequenced so every phase lands on its own and nothing is load-bearing until
 the thing before it works.
 
-Companion document: [`windows-handoff.md`](windows-handoff.md), which is the
-live working reference while the work spans two machines.
+Companion documents: [`windows-handoff.md`](windows-handoff.md), the live
+working reference while the work spans two machines, and
+[`phase-4-speech.md`](phase-4-speech.md), which is the design this document
+kept referring to as 4b/4c/4d without ever writing down.
 
 | # | Phase | Runs on | Status |
 |---|-------|---------|--------|
@@ -13,8 +15,8 @@ live working reference while the work spans two machines.
 | 1 | Portability hygiene + a failing Windows CI job | Mac | **merged** (PR #3) |
 | 2 | The platform layer, macOS only | Mac | **merged** (PR #4) |
 | 3 | `jarvis_platform/windows/` — first Windows build | Windows | **code complete** 2026-09-09; CI gate deferred to after phase 4 |
-| 4 | The speech sidecar | Mac, verified on Windows | not started |
-| 5 | Electron shell, macOS first | Mac | not started |
+| 4 | [The speech sidecar](phase-4-speech.md) | Mac, verified on Windows | **designed**, premise verified 2026-09-10; 4a next |
+| 5 | Electron shell, macOS first | Mac | not started — but see the TCC note below, learned in 4-zero |
 | 6 | Windows packaging and release | Windows | not started |
 | 7 | Optional: container / remote speech sidecar | either | not started |
 
@@ -36,6 +38,10 @@ Chrome's `webkitSpeechRecognition` in the page and sends the resulting *text*
 over the WebSocket; audio only ever travels the other way. Chromium's speech
 service is a Google web service reached with keys only Google's own builds
 carry, so **wrapping the existing page in Electron deletes the microphone**.
+**Measured and confirmed 2026-09-10** (Electron 44.3.0 / Chrome 152) — though
+not in the shape you would guess: the API is DEFINED there and fails at
+runtime with `error=network`, so a feature check reports it working. See
+[`phase-4-speech.md`](phase-4-speech.md).
 
 Moving speech recognition to the backend is therefore a precondition for
 Electron — and it is worth doing for its own sake. A large amount of
@@ -45,6 +51,26 @@ Electron — and it is worth doing for its own sake. A large amount of
 standing in for a signal. With the audio server-side, the server also knows
 exactly which samples it sent to the speaker and when, which is the reference
 signal for acoustic echo cancellation.
+
+## One thing phase 5 already knows, from phase 4's spike
+
+`4-zero` wrapped the page in Electron to test phase 4's premise and found
+something that belongs to phase 5 instead. Recorded here so it is not
+rediscovered the hard way.
+
+**On macOS, `session.setPermissionRequestHandler` is necessary but not
+sufficient.** There is a second gate Windows does not have: TCC. Measured
+2026-09-10 — status went `not-determined` → `granted` only via
+`systemPreferences.askForMediaAccess('microphone')`.
+
+So a packaged macOS Electron app needs **`NSMicrophoneUsageDescription` in
+its `Info.plist`** and must **call `askForMediaAccess`**, or `getUserMedia`
+fails. It fails looking exactly like the missing-handler case, which means
+you can install the handler, still fail, and have no way to tell which gate
+is shut. Both, or neither works.
+
+Full detail, and the other two traps, in
+[`phase-4-speech.md`](phase-4-speech.md).
 
 ## Six rules that hold across every phase
 

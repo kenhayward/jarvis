@@ -167,6 +167,12 @@ export function createVoiceInput(
   let stallNoticeAt = 0;
   // Any sign the user is mid-sentence. A rotation during one loses it.
   let lastHeardAt = 0;
+  // Has a transcript EVER come back on this page? The only positive evidence
+  // that the speech service behind the recogniser is actually reachable —
+  // the API being defined is not evidence, because in Electron it is defined
+  // and there is nothing behind it. Read by the `network` branch of
+  // handleError, and never reset: one success is enough, for ever.
+  let everHeard = false;
 
   const mark = (what: string) => {
     console.info(`[voice] ${new Date().toLocaleTimeString()} ${what}`);
@@ -326,6 +332,7 @@ export function createVoiceInput(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   function handleResult(event: any) {
     lastHeardAt = Date.now();
+    everHeard = true;
     let interim = "";
     for (let i = event.resultIndex; i < event.results.length; i++) {
       const result = event.results[i];
@@ -372,7 +379,32 @@ export function createVoiceInput(
     } else if (event.error === "audio-capture") {
       onError("Another app has taken the microphone — quit it, then reload.");
     } else if (event.error === "network") {
-      onError("Speech recognition lost its connection — that sentence was dropped.");
+      // `network` has two very different meanings and the obvious one is
+      // wrong more often than it looks.
+      //
+      // Chromium's recogniser is a GOOGLE WEB SERVICE reached with keys only
+      // Google's own builds carry. Measured 2026-09-10 in an Electron
+      // renderer (44.3.0 / Chrome 152): the API is defined, the constructor
+      // works, start() succeeds, onstart fires — and then this fires, every
+      // time, for ever. There is nothing behind it to call.
+      //
+      // If we have NEVER had a transcript on this page, that is what this is,
+      // and the old wording ("lost its connection — that sentence was
+      // dropped") sends the user to check their wifi for a fault no amount of
+      // wifi will fix, while the engine retries silently for ever. Once a
+      // transcript HAS come back the service is demonstrably reachable, so a
+      // `network` error really is the transient thing the old message
+      // described.
+      //
+      // Presence of the API is not evidence either way, which is why this
+      // turns on `everHeard` and not on a feature check. See
+      // docs/plans/phase-4-speech.md.
+      if (!everHeard) {
+        onError("This browser has no speech service behind it — nothing is " +
+                "being transcribed. Chrome has one; other builds may not.");
+      } else {
+        onError("Speech recognition lost its connection — that sentence was dropped.");
+      }
     } else {
       onError(`Speech recognition error: ${event.error}`);
     }

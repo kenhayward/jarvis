@@ -89,6 +89,7 @@ from run_executor import RunExecutor
 import data_paths
 import jarvis_memory
 import jarvis_platform
+import stt
 import tts
 from brain import Brain, BrainConfig, MAX_BOOT_PROJECTS
 from speech import Priority, SpeechScheduler
@@ -7094,6 +7095,20 @@ async def api_settings_status():
             "fish_voice_id": bool(env_dict.get("FISH_VOICE_ID", "").strip()),
             "user_name": env_dict.get("USER_NAME", ""),
         },
+        # The ear. `browser` today and for now: the recogniser is Chrome's,
+        # in the page, exactly as it has always been. This is reported rather
+        # than merely defaulted so the page and `/api/settings/status` have
+        # one place to read it from when a local backend exists — see
+        # docs/plans/phase-4-speech.md.
+        #
+        # `stt_backends_ready` says what could run on THIS machine. It cannot
+        # say whether the recogniser works where the page is running, and the
+        # two differ: measured 2026-09-10, `webkitSpeechRecognition` is
+        # DEFINED inside an Electron renderer and fails at runtime with
+        # `error=network`. Nothing here should be read as "the microphone
+        # works".
+        "stt_backend": stt.resolve_backend(),
+        "stt_backends_ready": stt.backends_ready(),
         # The eyes. Two separate facts, because the page must not offer a
         # switch that would do nothing: `screen_capture_gated` says this host
         # is one where the gate is JARVIS's own setting rather than the

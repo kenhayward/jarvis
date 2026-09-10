@@ -383,3 +383,25 @@ def test_no_startup_announcement_can_reach_the_voice(client):
                                message="no voice", remedy="install one")]
     assert preflight.spoken_summary(failing) == "", \
         "the startup announcement rail is not installed"
+
+
+# --- the ear, reported alongside the mouth --------------------------------
+
+def test_status_reports_where_speech_recognition_happens(client):
+    """`browser` today, and 4a deliberately changes nothing else. It is
+    REPORTED rather than merely defaulted so that the page has one place to
+    read it from when a local backend exists."""
+    import stt
+    c, _ = client
+    body = c.get("/api/settings/status").json()
+    assert body["stt_backend"] == stt.BACKEND_BROWSER
+    assert body["stt_backends_ready"] == {stt.BACKEND_BROWSER: True}
+
+
+def test_a_typo_in_the_stt_backend_does_not_make_the_status_lie(client, monkeypatch):
+    """The same rail `tts` has. A misspelling in `.env` must leave the page
+    showing the backend actually in use, not the one that was typed."""
+    import stt
+    c, _ = client
+    monkeypatch.setenv("JARVIS_STT_BACKEND", "whsiper")
+    assert c.get("/api/settings/status").json()["stt_backend"] == stt.DEFAULT_BACKEND

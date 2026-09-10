@@ -52,9 +52,21 @@ this presents as "the UI is up but nothing works" rather than as an error.
 ## Architecture
 - **Backend**: FastAPI + Python (server.py, ~7000 lines)
 - **Frontend**: Vite + TypeScript + Three.js (audio-reactive orb)
-- **Communication**: WebSocket (JSON messages + binary audio)
+- **Communication**: WebSocket, **JSON messages only** — there is no binary
+  frame in either direction. Audio reaches the page as base64 inside a JSON
+  message (`{"type": "audio", "utt": 3, "idx": 1, "data": "<base64 mp3>"}`)
+  and the page decodes it with `atob`; the handler reads with
+  `receive_text()`. This line used to claim binary audio and was simply
+  wrong — checked 2026-09-10, there is no `send_bytes`, `receive_bytes` or
+  `binaryType` anywhere. It matters because phase 4 has to send audio the
+  other way, and "just use the binary path" describes a thing that does not
+  exist
 - **AI**: a long-lived Claude Code process (`brain.py`, Sonnet by default) on
   the user's subscription; no Anthropic API calls on the voice path
+- **STT**: `stt.py` — where speech recognition happens. `browser` (Chrome's
+  own recogniser, in the page) is the only backend and the default, so this
+  changes nothing today; it exists so a local backend can be chosen in one
+  place later. See `docs/plans/phase-4-speech.md`
 - **TTS**: `tts.py` — three backends, one call per sentence chunk: macOS
   `say` (WAV, offline, default), `piper` (WAV, offline, neural, optional
   dependency), or Fish Audio (MP3, hosted). `JARVIS_TTS_BACKEND` chooses, and
