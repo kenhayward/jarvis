@@ -56,14 +56,23 @@ So the next real work is phase 4: server-side speech recognition. Read
 docs/plans/phase-4-speech.md. 4-zero, 4a and 4b are DONE (2026-09-10); 4c is
 next.
 
-Read 4d before anything else in that document. The design was overturned by
-its own bake-off: recording twenty utterances in a real room showed every
-candidate engine transcribes JARVIS rather than the user during barge-in,
-12 takes out of 12, and NOT because he was louder — in three of four he was
-at or below the user's own level. So echo cancellation went from "first
-thing to cut" to required, and the audio boundary went from segments to
-continuous streaming. Do not re-argue that from the earlier sections; they
-are marked SUPERSEDED and left in place on purpose.
+Read "How the boundary moved three times in one day" before anything else
+in that document. The audio boundary went segments -> streaming -> segments
+in a single day, and the round trip is the most useful thing in the repo
+right now.
+
+The short version: 4b measured barge-in with a raw microphone tap
+(sounddevice) and found every engine transcribing JARVIS instead of the
+user. That looked decisive and it reversed the design. It was wrong — the
+product captures through getUserMedia, which applies echo cancellation
+before anything sees a sample, and `{audio: true}` grants it (verified,
+Chrome 152). Re-run through the browser, the same test transcribes the user.
+
+The rule out of it, which is NOT "measure more" — 4b did measure, carefully:
+A MEASUREMENT MUST GO THROUGH THE PRODUCT'S OWN PATH OR IT MEASURES
+SOMETHING ELSE. Nothing in the result could reveal the difference; the
+recordings were real, the levels good, the guards passed, the numbers
+wrong.
 
 4-zero, the spike it opens with, is DONE on both platforms (2026-09-10).
 The premise holds: Electron deletes transcription and leaves the microphone
