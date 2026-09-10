@@ -188,15 +188,50 @@ The spike itself was throwaway and is not in the repository.
 
 ### 4a — the plumbing, with nothing switched on
 
-* `stt.py` with `BACKEND_BROWSER` as the default
-* the audio-in frame, page → server
-* the server raising `transcript` itself when the backend is not `browser`
-* `web_auth` and the settings surface updated to match
+**Scope corrected while implementing, 2026-09-10.** Two items originally
+listed here were building ahead of a caller, which is the thing this
+repository refuses to do everywhere else, so both moved to 4c:
+
+* ~~the audio-in frame, page → server~~ — **deferred.** `BACKENDS` is
+  `("browser",)`; there is no engine to transcribe anything until 4c, so a
+  receive path would take audio and discard it. The screen-capture work
+  settled this precedent already: "a half-built eye is worse than a closed
+  one". The frame lands in the commit that can use it.
+* ~~a Python `browser_is_usable` / `explain_browser_error`~~ — **deferred.**
+  They had no caller: the server's `mic` frame is logged and drives nothing
+  by deliberate design, and giving it teeth is a behaviour change 4a promised
+  not to make. The KNOWLEDGE they encoded belongs in `voice.ts`, where the
+  recogniser is and where the decision is actually made, and that is where it
+  went.
+
+What 4a actually is:
+
+* `stt.py` — `BACKEND_BROWSER`, `resolve_backend`, `backends_ready`, with the
+  same typo-falls-back rail `tts.py` has
+* `/api/settings/status` reporting `stt_backend` and `stt_backends_ready`,
+  which is `stt.py`'s caller, so the module is not itself speculative
+* `voice.ts` telling the truth about a `network` error — see below
 * the `CLAUDE.md` binary-audio correction
 
-**Ships with `browser` default, so user-visible behaviour is unchanged.** That
-is the point: the risky part lands inert and can be exercised before it is
-relied on.
+**Ships with `browser` default, so user-visible behaviour is unchanged**
+except for one message that was actively misleading.
+
+#### The one behaviour change, and why it is not scope creep
+
+`voice.ts` said, on any `network` error:
+
+    "Speech recognition lost its connection — that sentence was dropped."
+
+4-zero measured that in Electron this error fires every time, for ever,
+because there is no speech service behind the recogniser at all. That wording
+sends the user to check their wifi for a fault no wifi will fix, while the
+engine retries silently.
+
+It now turns on `everHeard` — whether a transcript has EVER come back on this
+page — because that is the only positive evidence the service is reachable.
+Never heard anything: say there is no speech service. Heard something before:
+the old message is right, and it stays. Deliberately NOT a feature check, for
+the reason the whole spike exists.
 
 ### 4b — the bake-off
 
