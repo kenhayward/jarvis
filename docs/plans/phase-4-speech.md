@@ -245,7 +245,7 @@ is architecturally cleaner.
 | **4-zero** | the spike, before any code | **DONE** 2026-09-10, both platforms |
 | **4a** | `stt.py`, settings reporting, the `voice.ts` message fix | **DONE** — `browser` still default, nothing user-visible changed |
 | **4b** | the bake-off, real mic and real room | **DONE** — SAPI eliminated; **overturned the boundary** |
-| **4c** | the segment upload frame, and the engine behind it | next |
+| **4c** | the segment upload frame, and the engine behind it | **DONE** 2026-09-10 |
 | **4d** | echo cancellation | **cuttable** — the browser already does it, verified on the product's path |
 
 ### 4-zero — the spike — **DONE 2026-09-10 on Windows**
@@ -390,7 +390,35 @@ reference and therefore a real word error rate rather than somebody preferring
 one transcript to another. Read speech flatters every candidate equally, so
 the RANKING holds; the absolute figures do not.
 
-### 4c — the segment upload frame, and the engine behind it
+### 4c — the segment upload frame, and the engine behind it — **DONE 2026-09-10**
+
+**The engine: `faster-whisper`, `base.en`, with a project-name prompt.**
+whisper.cpp WAS tested rather than assumed away — b4938, same weights, same
+twenty recordings, identical scores (0.00/0.15/0.00, 4/5 tool words), half the
+disk, nothing on the Python path. It lost on one measured fact: its CLI
+reloads the 141 MB model every call, 0.59s fixed against 0.03s per second of
+audio, so a 0.41s response becomes 0.75s permanently. JARVIS is a long-lived
+server and pays that once. The argument, including the `whisper-server.exe`
+route not taken, is in `requirements-stt.txt`.
+
+**The prompt IS the model choice.** `base.en` alone got 4/5 tool-argument
+words; with the user's project names as `initial_prompt`, 5/5 at 0.40s —
+matching `small.en` at 2.5x the speed and a third of the disk. Drop the prompt
+and this should become `small.en`.
+
+**The page still does the hearing, and that is the whole shape of it.** Echo
+cancellation exists only in the page, where the audio is also played; ship the
+raw microphone and it is thrown away. So endpointing lives with the audio and
+the cancellation, transcription lives where the model is, and the seam between
+them is one utterance of WAV.
+
+`_final_transcript` was extracted from the WebSocket handler so the replay
+check, the echo verdict and the fresh-start check have exactly one
+implementation. There are two ways a sentence now reaches JARVIS and only one
+of them is in use on a default install — precisely the arrangement where a
+second copy would rot unnoticed. A test holds `speech.user_final` to that one
+caller.
+
 
 * the **audio-in frame**, page -> server, one utterance as base64 in a JSON
   message. Deferred out of 4a for having no caller; 4c is the caller.

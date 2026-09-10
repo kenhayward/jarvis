@@ -7,6 +7,7 @@
 
 import { createOrb, type OrbState } from "./orb";
 import { createVoiceInput, createAudioPlayer, createMicMonitor } from "./voice";
+import { createCapture } from "./capture";
 import { createSocket } from "./ws";
 import { openSettings, checkFirstTimeSetup } from "./settings";
 import "./style.css";
@@ -97,6 +98,40 @@ const voiceInput = createVoiceInput(
     socket.send({ type: "mic", text: event });
   }
 );
+
+// ── the local speech backend ──────────────────────────────────────────────
+// When the server is doing the recognising, the PAGE still does the hearing:
+// the browser's echo cancellation only exists here, where the audio is also
+// being played, and shipping the raw microphone instead throws it away.
+// Measured 2026-09-10 — see frontend/src/capture.ts.
+//
+// The server is asked which backend it has rather than the page guessing.
+// On the default install this is `browser`, nothing below runs, and the
+// recogniser above stays in charge exactly as it always has.
+const capture = createCapture(
+  (data: string) => {
+    micMonitor.sawSpeech();
+    socket.send({ type: "audio_in", data });
+  },
+  (event: string) => {
+    socket.send({ type: "mic", text: `capture: ${event}` });
+  }
+);
+
+fetch("/api/settings/status")
+  .then((r) => r.json())
+  .then((s) => {
+    if (s?.stt_backend && s.stt_backend !== "browser") {
+      // Two recognisers listening at once would double every sentence, so
+      // the browser's is stood down before this one starts.
+      voiceInput.stop();
+      capture.start();
+    }
+  })
+  .catch(() => {
+    // The status endpoint being unreachable is not a reason to go deaf: the
+    // browser recogniser is already running and stays running.
+  });
 
 // A live meter for the microphone itself. If this moves when you speak, the
 // microphone is working — whatever else is or is not happening. It answers

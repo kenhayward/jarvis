@@ -395,7 +395,11 @@ def test_status_reports_where_speech_recognition_happens(client):
     c, _ = client
     body = c.get("/api/settings/status").json()
     assert body["stt_backend"] == stt.BACKEND_BROWSER
-    assert body["stt_backends_ready"] == {stt.BACKEND_BROWSER: True}
+    # Every backend must have an answer — the trap `tts.backends_ready`
+    # exists for. `whisper` is an optional dependency, so its value depends
+    # on the machine and is not asserted; that it is PRESENT is.
+    assert set(body["stt_backends_ready"]) == set(stt.BACKENDS)
+    assert body["stt_backends_ready"][stt.BACKEND_BROWSER] is True
 
 
 def test_a_typo_in_the_stt_backend_does_not_make_the_status_lie(client, monkeypatch):

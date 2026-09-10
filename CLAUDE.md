@@ -63,10 +63,16 @@ this presents as "the UI is up but nothing works" rather than as an error.
   exist
 - **AI**: a long-lived Claude Code process (`brain.py`, Sonnet by default) on
   the user's subscription; no Anthropic API calls on the voice path
-- **STT**: `stt.py` — where speech recognition happens. `browser` (Chrome's
-  own recogniser, in the page) is the only backend and the default, so this
-  changes nothing today; it exists so a local backend can be chosen in one
-  place later. See `docs/plans/phase-4-speech.md`
+- **STT**: `stt.py` — where speech recognition happens. Two backends:
+  `browser` (Chrome's own recogniser, in the page) is the DEFAULT and nothing
+  changes without opting out of it; `whisper` is local, optional
+  (`requirements-stt.txt`), and runs `faster-whisper` in this process. Either
+  way the PAGE does the hearing — the browser's echo cancellation only exists
+  where the audio is also played, and shipping a raw microphone to the server
+  throws it away (measured; see `docs/plans/phase-4-speech.md`). With
+  `whisper`, the page sends one utterance as `audio_in` and the server raises
+  the same `transcript` event the browser would, so nothing downstream knows
+  which recogniser heard it
 - **TTS**: `tts.py` — three backends, one call per sentence chunk: macOS
   `say` (WAV, offline, default), `piper` (WAV, offline, neural, optional
   dependency), or Fish Audio (MP3, hosted). `JARVIS_TTS_BACKEND` chooses, and
@@ -289,6 +295,15 @@ JARVIS builds**. It is only this repository's own copies that are gone.
   never spawns it (every test sets this)
 - `JARVIS_MUTE_MIC_DURING_SPEECH` (optional, default false) — fallback if echo
   rejection is not enough with a given microphone
+- `JARVIS_STT_BACKEND` (optional, default `browser`) — `browser` for Chrome's
+  own recogniser in the page, `whisper` for local recognition through
+  `faster-whisper`. An unknown value falls back to `browser`: a typo must not
+  cost the user his microphone any more than it costs him his voice
+- `JARVIS_STT_MODEL` (optional, default `base.en`) — the whisper model, a bare
+  NAME and never a path (what the library loads, it executes). `base.en` and
+  not `small.en` because with the project-name prompt it matches the larger
+  model on the words that reach tools, at 2.5x the speed and a third of the
+  disk — measured, and the prompt is what buys it
 - `JARVIS_TTS_BACKEND` (optional, default `say`) — `say` for the local macOS
   voice, `fish` for Fish Audio. An unknown value falls back to `say` with a
   warning: a typo in `.env` must not cost the user his voice
