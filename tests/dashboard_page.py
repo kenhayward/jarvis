@@ -87,7 +87,22 @@ def build_bundle() -> Path:
     """
     target = DIST / "dashboard.html"
     if not target.is_file() or target.stat().st_mtime < _newest_source():
-        subprocess.run(["npm", "run", "build"], cwd=FRONTEND, check=True,
+        # `shutil.which`, not the bare name. On Windows `npm` IS `npm.cmd`,
+        # and CreateProcess appends `.exe` and nothing else — it does not
+        # consult PATHEXT — so a bare "npm" raises
+        # FileNotFoundError: [WinError 2]. `which` does consult PATHEXT and
+        # hands back the full path to the shim, which spawns fine (measured
+        # 2026-09-10, and the same measurement that corrected the belief in
+        # claude_env.split_command's docstring).
+        #
+        # This hid for a long time and the way it hid is the interesting part.
+        # CI runs `npm run build` in the step immediately before pytest, so
+        # the bundle is never stale there and this line is never reached. It
+        # fires only when a frontend source is newer than `dist` — which is
+        # the ordinary local edit-then-test loop, and on Windows it took the
+        # whole file down with 16 errors.
+        npm = shutil.which("npm") or "npm"
+        subprocess.run([npm, "run", "build"], cwd=FRONTEND, check=True,
                        capture_output=True, text=True,
                        timeout=BUILD_TIMEOUT_SEC)
     return DIST
