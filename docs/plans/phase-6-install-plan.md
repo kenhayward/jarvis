@@ -1125,7 +1125,14 @@ git commit -m "install.py: create a missing .env; diagnose, never edit, an exist
 
 ---
 
-### Task 6: The models JARVIS will actually load
+### Task 6: The models JARVIS will actually load — **DONE 2026-09-11**
+
+> Run for real against the working checkout: the probe, through the venv
+> with the server's environment, answered `en_GB-alan-medium` present in
+> this checkout's `data/voices` and `base.en` cached; the step skipped in
+> 0.3s. `piper.download_voices --download-dir` and
+> `WhisperModel(model_size_or_path, device, ..., compute_type)` confirmed to
+> exist as called. The real downloads happen in Task 12's fresh clone.
 
 **Files:**
 - Modify: `install.py` (append)

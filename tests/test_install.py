@@ -337,3 +337,71 @@ def test_fish_without_a_key_on_a_machine_without_say_is_mute():
     problems = install.env_problems(
         {"JARVIS_STT_BACKEND": "whisper", "JARVIS_TTS_BACKEND": "fish"}, have_say=False)
     assert any("will not speak" in p for p in problems)
+
+
+# --- models ------------------------------------------------------------------
+
+import json as _json
+
+
+def probe_says(**kw):
+    # voices_dir is only ever created when the voice is missing; every test
+    # that says so passes its own tmp directory.
+    found = {"voice": "en_GB-alan-medium", "voice_present": True,
+             "voices_dir": "/never-created", "stt_model": "base.en", "stt_present": True}
+    found.update(kw)
+    return ok("some import-time log line\n" + _json.dumps(found) + "\n")
+
+
+def is_probe(argv):
+    return argv[1:2] == ["-c"] and argv[2] == install.PROBE_MODELS
+
+
+def test_models_already_present_download_nothing(tmp_path, rec):
+    fake_venv(tmp_path)
+    rec.reply(is_probe, probe_says())
+    status = install.models(make_ctx(tmp_path))
+    assert rec.argvs() == [[str(tmp_path / ".venv" / "Scripts" / "python.exe"), "-c", install.PROBE_MODELS]]
+    assert status.startswith("skipped")
+
+
+def test_a_missing_voice_is_downloaded_by_its_configured_name(tmp_path, rec):
+    exe = fake_venv(tmp_path)
+    rec.reply(is_probe, [probe_says(voice="en_US-amy-low", voice_present=False,
+                                    voices_dir=str(tmp_path / "voices")),
+                         probe_says(voice="en_US-amy-low")])
+    install.models(make_ctx(tmp_path))
+    assert [str(exe), "-m", "piper.download_voices", "--download-dir",
+            str(tmp_path / "voices"), "en_US-amy-low"] in rec.argvs()
+
+
+def test_a_missing_whisper_model_is_fetched_by_its_configured_name(tmp_path, rec):
+    exe = fake_venv(tmp_path)
+    rec.reply(is_probe, [probe_says(stt_model="small.en", stt_present=False),
+                         probe_says(stt_model="small.en")])
+    install.models(make_ctx(tmp_path))
+    assert [str(exe), "-c", install.FETCH_WHISPER, "small.en"] in rec.argvs()
+
+
+def test_a_voice_named_as_a_missing_file_is_a_stop_not_a_download(tmp_path, rec):
+    fake_venv(tmp_path)
+    rec.reply(is_probe, probe_says(voice="/models/mine.onnx", voice_present=False))
+    with pytest.raises(install.StepFailed, match="does not exist"):
+        install.models(make_ctx(tmp_path))
+    assert not any("piper.download_voices" in a for a in rec.argvs())
+
+
+def test_the_probe_runs_with_the_servers_environment(tmp_path, rec):
+    fake_venv(tmp_path)
+    (tmp_path / ".env").write_text("JARVIS_PIPER_VOICE=en_US-amy-low\n")
+    rec.reply(is_probe, probe_says())
+    install.models(make_ctx(tmp_path))
+    assert rec.calls[0]["env"]["JARVIS_PIPER_VOICE"] == "en_US-amy-low"
+
+
+def test_a_download_jarvis_still_cannot_find_is_a_stop(tmp_path, rec):
+    fake_venv(tmp_path)
+    # Still missing afterwards. A tmp voices_dir: the step creates it.
+    rec.reply(is_probe, probe_says(voice_present=False, voices_dir=str(tmp_path / "voices")))
+    with pytest.raises(install.StepFailed, match="still cannot find"):
+        install.models(make_ctx(tmp_path))

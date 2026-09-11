@@ -287,3 +287,58 @@ def dotenv(ctx: Context) -> str:
                          f"added:\n  " + "\n  ".join(still))
     added = [line for line in block if line and not line.startswith("#")]
     return f"created {path} from .env.example, adding " + ", ".join(added)
+
+
+# Asked of JARVIS itself, through the venv: "present" means what the server
+# will find, not what this script believes. One JSON line, printed last, so
+# anything a module logs at import time cannot be mistaken for the answer.
+PROBE_MODELS = (
+    "import json, data_paths, stt, tts\n"
+    "print(json.dumps({'voice': tts.resolve_piper_voice(),"
+    " 'voice_present': tts.piper_model_path() is not None,"
+    " 'voices_dir': str(data_paths.voices_dir()),"
+    " 'stt_model': stt.resolve_model(),"
+    " 'stt_present': stt.model_is_cached()}))"
+)
+# The model name arrives as an ARGUMENT, never spliced into the code.
+FETCH_WHISPER = (
+    "import sys\n"
+    "from faster_whisper import WhisperModel\n"
+    "WhisperModel(sys.argv[1], device='cpu', compute_type='int8')"
+)
+
+
+def _probe_models(ctx: Context, exe: Path, env: dict[str, str]) -> dict:
+    argv = [str(exe), "-c", PROBE_MODELS]
+    result = must(run(argv, cwd=ctx.root, env=env), argv,
+                  "could not ask JARVIS which models it will load")
+    return json.loads(result.stdout.strip().splitlines()[-1])
+
+
+def models(ctx: Context) -> str:
+    exe = venv_python(ctx.root)
+    env = effective_env(ctx)
+    found = _probe_models(ctx, exe, env)
+    fetched = []
+    if not found["voice_present"]:
+        voice = found["voice"]
+        if "/" in voice or "\\" in voice or voice.endswith(".onnx"):
+            raise StepFailed(f"JARVIS_PIPER_VOICE names a file that does not exist: {voice}")
+        Path(found["voices_dir"]).mkdir(parents=True, exist_ok=True)
+        argv = [str(exe), "-m", "piper.download_voices", "--download-dir",
+                found["voices_dir"], voice]
+        must(run(argv, cwd=ctx.root, env=env), argv, f"could not download the piper voice {voice}")
+        fetched.append(f"voice {voice}")
+    if not found["stt_present"]:
+        argv = [str(exe), "-c", FETCH_WHISPER, found["stt_model"]]
+        must(run(argv, cwd=ctx.root, env=env), argv,
+             f"could not fetch the whisper model {found['stt_model']}")
+        fetched.append(f"whisper {found['stt_model']}")
+    if not fetched:
+        return f"skipped: voice {found['voice']} and whisper {found['stt_model']} already present"
+    again = _probe_models(ctx, exe, env)
+    missing = [name for name, key in (("the voice", "voice_present"), ("the whisper model", "stt_present"))
+               if not again[key]]
+    if missing:
+        raise StepFailed("downloaded, but JARVIS still cannot find " + " or ".join(missing))
+    return "downloaded " + ", ".join(fetched)
