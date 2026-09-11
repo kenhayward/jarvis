@@ -3,6 +3,8 @@ const { app, BrowserWindow, Menu, Tray, dialog, session, shell, systemPreference
 const path = require("node:path");
 const { createSupervisor } = require("./server");
 const { sameOrigin, grantsPermission } = require("./policy");
+const { sttWarning } = require("./backend");
+const { findPython } = require("./python");
 
 const ORIGIN = process.env.JARVIS_ORIGIN || "http://127.0.0.1:8340";
 const REPO_ROOT = path.resolve(__dirname, "..");
@@ -178,7 +180,26 @@ if (!app.requestSingleInstanceLock()) {
     }
     createWindow();
     createTray();
+    await warnIfDeaf();
   });
+
+  // After the window, not before: a warning in front of a blank screen reads
+  // like a crash, and this is information rather than a failure to start.
+  // A status that cannot be read is logged and nothing is shown -- see
+  // backend.js on not warning from a guess.
+  async function warnIfDeaf() {
+    try {
+      const response = await fetch(`${ORIGIN}/api/settings/status`,
+                                   { signal: AbortSignal.timeout(5000) });
+      const warning = sttWarning(await response.json(),
+                                 findPython(REPO_ROOT) || "python");
+      if (!warning) return;
+      log(`speech recognition: ${warning.split("\n")[0]}`);
+      dialog.showMessageBox(win, { type: "warning", title: "JARVIS cannot hear", message: warning });
+    } catch (e) {
+      log(`could not read settings status: ${e.message}`);
+    }
+  }
 
   // Deliberately does nothing. Closing the window hides it; the application
   // exits through the tray's Quit, or any other app.quit().

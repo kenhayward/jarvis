@@ -1034,7 +1034,38 @@ git commit -m "electron: closing hides, the tray quits"
 
 ---
 
-### Task 7: Saying so when the backend is deaf
+### Task 7: Saying so when the backend is deaf — **DONE 2026-09-11, dialog display pending**
+
+> **Built with one more case and one more argument** — the committed
+> `electron/backend.js` is the truth:
+>
+> - **Whisper configured but not installed is deaf too.** `stt.transcribe`
+>   returns `None` for every utterance when the package or the model is
+>   missing, and says so only in the server log — which a window the app
+>   started gives nobody a reason to read. `/api/settings/status` already
+>   reports `stt_backends_ready.whisper`; `false` there now warns, with the
+>   install and model-fetch commands from `requirements-stt.txt`. Absent
+>   (an older server), it says nothing rather than guess.
+> - **`sttWarning(status, python)`**: the app knows the venv's interpreter
+>   (`findPython`), so the commands are the user's own, quoted when the path
+>   has a space.
+> - The status fetch has a 5s timeout, like every other probe here.
+>
+> **Verified against the real server's payloads** (bare servers on 8341, no
+> page, silent): `JARVIS_STT_BACKEND=browser` -> the browser warning;
+> `whisper` with `HF_HOME` pointed at an empty directory ->
+> `stt_backends_ready.whisper: false` -> the install warning, with this
+> box's interpreter path; `whisper` installed -> `null`.
+>
+> **Pending:** the dialog actually appearing in Electron. Not shown yet
+> because a Windows warning box may sound and Ken was on a call; Task 8's
+> live run covers it.
+>
+> Also fixed on the way: the heredoc that wrote Task 4's
+> `test/server.test.js` had collapsed the doubled backslash in
+> `"C:\\repo"` to a single one, and in JavaScript `\r` is a carriage return:
+> the path held one mid-way. Its tests passed anyway, comparing a mangled
+> constant to itself; they now use a real Windows path.
 
 **Files:**
 - Modify: `electron/main.js`
