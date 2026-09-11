@@ -146,6 +146,30 @@ the commit why the alternative was worse.
 - `frontend/src/voice.ts` — Web Speech API + audio playback
 - `frontend/src/main.ts` — Frontend state machine
 - `frontend/src/dashboard/` — The `/dashboard` run monitor (vanilla TS)
+- `electron/` — The desktop application: a tray-resident Electron shell that
+  starts and supervises `server.py` and loads the page the server itself
+  serves, over plain `http://127.0.0.1:8340` — no Vite, so no certs. Run it
+  with `cd electron && npm install && node node_modules/electron/install.js
+  && npm start` (`npm install` alone does not unpack the Electron binary).
+  `main.js` is the only file that touches Electron; the logic beside it has
+  no Electron import and is tested with `npm test` in that directory, which
+  **CI does not run** — run it after touching anything there.
+  `server.js` attaches to a JARVIS already on the port (never a second
+  server: two brains, two SQLite writers), refuses a port held by anything
+  else, and otherwise spawns the venv's `server.py --no-ssl` — without the
+  flag, the dev workflow's certs switch the server to HTTPS and the window
+  cannot load it. It kills only a server it started. `health.js` tells a
+  JARVIS from anything else by the NAME in `/api/health`, and only a refused
+  connection counts as "nothing there": a JARVIS on HTTPS fails an
+  `http://` probe differently, and reading that as empty would start a
+  second server over it. `policy.js` grants the microphone to the JARVIS
+  origin, audio only, and nothing else; `backend.js` warns when the
+  configured recogniser cannot hear inside Electron (`browser` never can).
+  Closing the window HIDES it and JARVIS keeps listening; the tray's Quit
+  exits. That only works because the window sets
+  `backgroundThrottling: false` — measured, a hidden window without it
+  captures two thirds of its audio. `docs/plans/phase-5-electron.md` has
+  the measurements, and what is still unverified on macOS
 - `run_store.py` — SQLite `runs` / `run_events` tables, six-value status enum
 - `run_executor.py` — Spawns `claude -p --output-format stream-json` and drives
   each run to a terminal state, streaming its events into the store

@@ -1224,6 +1224,11 @@ A phase that reports only successes is the one nobody trusts later.
 
 - [ ] **Step 4: Update the standing documentation**
 
+> **CLAUDE.md half DONE 2026-09-11**, ahead of the live run and written from
+> what was built rather than the draft below (which predates `policy.js`,
+> `backend.js`, `--no-ssl` and the measured throttling). Still to do here:
+> mark phase 5 done in `cross-platform-port.md` — after Step 1, not before.
+
 In `CLAUDE.md`, add `electron/` to the Key Files list:
 
 ```markdown
