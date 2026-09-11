@@ -1869,7 +1869,30 @@ git commit -m "install.py: preflight's verdict last, and main() that stops at th
 
 ---
 
-### Task 10: "Start with Windows"
+### Task 10: "Start with Windows" — **DONE 2026-09-11, spoken check pending**
+
+> **Built with one change to the code below**, found by Ken ticking the box:
+> left to Electron, the Run entry's value name is `electron.app.Electron` —
+> shared by every unpackaged Electron app, so another would overwrite it, and
+> Task Manager would call it "Electron". It is now `JARVIS` (`LOGIN_NAME`,
+> passed as `name`). And a throwaway probe measured that
+> `getLoginItemSettings().openAtLogin` is true for ANY Run entry with the
+> same path and args, whatever its name — it stayed true after our own entry
+> was removed, because another matched — so the checkbox reads the named
+> list instead: `startsAtLogin(settings)`, our entry and enabled. 48
+> Electron tests.
+>
+> **By hand, against the silent stand-in** (`npm start -- --hidden`): no
+> window on the desktop, four Electron processes, the "started with
+> Windows" notice seen by Ken. Ticked, the checkbox read back ticked and the
+> registry held, verbatim:
+>
+> `JARVIS    REG_SZ    "D:\Repositories\jarvis\.claude\worktrees\project-pickup-docs-faab6d\electron\node_modules\electron\dist\electron.exe" "D:\Repositories\jarvis\.claude\worktrees\project-pickup-docs-faab6d\electron" --hidden`
+>
+> Unticked, it was gone and the Run key was back to its four prior entries.
+>
+> **Pending:** Step 7, the real JARVIS launched hidden and spoken to — needs
+> Ken with audio.
 
 **Files:**
 - Create: `electron/login.js`

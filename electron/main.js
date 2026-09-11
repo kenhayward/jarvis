@@ -5,10 +5,13 @@ const { createSupervisor } = require("./server");
 const { sameOrigin, grantsPermission } = require("./policy");
 const { sttWarning } = require("./backend");
 const { findPython } = require("./python");
+const { startAtLoginSupported, loginItem, launchedAtLogin, startsAtLogin } = require("./login");
 
 const ORIGIN = process.env.JARVIS_ORIGIN || "http://127.0.0.1:8340";
 const REPO_ROOT = path.resolve(__dirname, "..");
 const log = (m) => console.log(`[jarvis] ${m}`);
+// Started by Windows at login: the tray, not a window. See login.js.
+const STARTED_AT_LOGIN = launchedAtLogin(process.argv);
 
 // HTTP and not HTTPS, deliberately. The certificates exist for one reason --
 // frontend/vite.config.ts hard-codes an HTTPS proxy target -- and there is no
@@ -45,17 +48,48 @@ if (!app.requestSingleInstanceLock()) {
 
   app.on("second-instance", showWindow);
 
-  function createTray() {
-    tray = new Tray(path.join(__dirname, "tray-icon.png"));
-    tray.setToolTip("JARVIS (listening)");
-    tray.setContextMenu(Menu.buildFromTemplate([
-      { label: "Show JARVIS", click: showWindow },
+  // The login entry, as Windows is asked for it AND as it is read back:
+  // getLoginItemSettings on Windows only answers for the same path and args.
+  function ourLoginItem() {
+    return loginItem(process.execPath, app.getAppPath());
+  }
+
+  function trayMenu() {
+    const items = [{ label: "Show JARVIS", click: showWindow }];
+    if (startAtLoginSupported(process.platform)) {
+      items.push({
+        label: "Start with Windows",
+        type: "checkbox",
+        // What Windows reports, not what this process last wrote -- read
+        // by name; see startsAtLogin for why openAtLogin will not do.
+        checked: startsAtLogin(app.getLoginItemSettings(ourLoginItem())),
+        click: (item) => {
+          app.setLoginItemSettings({ ...ourLoginItem(), openAtLogin: item.checked });
+          tray.setContextMenu(trayMenu());
+        },
+      });
+    }
+    items.push(
       { type: "separator" },
       // Quit must be findable. An application a person cannot work out how
       // to exit is worse than one that simply closes when you close it.
       { label: "Quit JARVIS", click: () => app.quit() },
-    ]));
+    );
+    return Menu.buildFromTemplate(items);
+  }
+
+  function createTray() {
+    tray = new Tray(path.join(__dirname, "tray-icon.png"));
+    tray.setToolTip("JARVIS (listening)");
+    tray.setContextMenu(trayMenu());
     tray.on("double-click", showWindow);
+    if (STARTED_AT_LOGIN && process.platform === "win32") {
+      tray.displayBalloon({
+        title: "JARVIS started with Windows",
+        content: "It is listening. Open it from the tray icon.",
+        noSound: true,
+      });
+    }
   }
 
   // The first time the window is closed, say where JARVIS went. Closing
@@ -124,6 +158,9 @@ if (!app.requestSingleInstanceLock()) {
       height: 800,
       title: "JARVIS",
       backgroundColor: "#111111",
+      // At login, the tray and not a window -- still listening: phase 6's
+      // Task 1 measured a never-shown window capturing 99.9%, no gesture.
+      show: !STARTED_AT_LOGIN,
       webPreferences: {
         preload: path.join(__dirname, "preload.js"),
         contextIsolation: true,
@@ -195,7 +232,9 @@ if (!app.requestSingleInstanceLock()) {
                                  findPython(REPO_ROOT) || "python");
       if (!warning) return;
       log(`speech recognition: ${warning.split("\n")[0]}`);
-      dialog.showMessageBox(win, { type: "warning", title: "JARVIS cannot hear", message: warning });
+      // Not hung off a window nobody can see: at login there is none showing.
+      dialog.showMessageBox(win && win.isVisible() ? win : undefined,
+                            { type: "warning", title: "JARVIS cannot hear", message: warning });
     } catch (e) {
       log(`could not read settings status: ${e.message}`);
     }
