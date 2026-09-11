@@ -289,6 +289,72 @@ live JARVIS session left running from earlier testing was capturing the same
 microphone the spike measured, and it produced a result that looked like
 evidence against the true cause.
 
+## What running it found — 2026-09-11
+
+Ken ran the application by hand on the Windows box — `npm start`, a real
+conversation through the window, the tray — and reported that it **worked
+well**. What follows is what the records show, and what they cannot.
+
+### What the records show
+
+The server logged to Ken's terminal, which was not captured, so the evidence
+is the brain's own session transcripts (Claude Code writes them under
+`~/.claude/projects/...-data-jarvis/`) and the process table afterwards.
+
+- **Recognition through Electron works, and project names reach tools.**
+  Whisper, fed by the page's own capture inside the Electron window, heard
+  "Good morning. Is there anything happening in the jarvis project?" word for
+  word; the brain called `list_sessions` with `filter: "jarvis"`, then
+  `session_detail` on it, and answered correctly (the open PR, waiting on the
+  voice test). A second question, "Any other projects running, Jarvis?", was
+  heard and answered from `list_sessions`.
+- **Quit leaves nothing behind.** After Ken quit from the tray: no Electron
+  process, port 8340 free.
+- Earlier in the day, by hand and against a silent stand-in: the X hides and
+  the first-hide notice appears, a second launch reshows the window, tray
+  Quit exits, and a server the app attached to survives it (Tasks 5 and 6).
+
+### What the records cannot show
+
+Barge-in, speaking while the window was hidden, the `mic: DEAF` line from
+the first launch, and whether the recogniser warning stayed away — all of
+those live in the terminal output. They rest on Ken's "worked well", which
+is a person's report and not a measurement. If a tray-resident JARVIS ever
+drops words, re-measure hidden capture first, with a visible control (see
+Task 1).
+
+### A defect the run exposed — not in the Electron code
+
+**The brain rotated its context after ONE question.** The rotation budget
+is 120,000 tokens of conversation; the first question's turn made four
+model calls (thinking, two tool calls, the answer) of about 37,000 tokens of
+context each. Ken's next words, straight after the rotation, were "I lost
+it." — plausibly the rotation's pause, not confirmed.
+
+Measured, not inferred: a `claude -p --output-format stream-json` turn with
+two tool reads reported per-call contexts of 37,765 / 53,015 / 55,079 /
+55,278 tokens, and its `result` event reported **201,137 — exactly their
+sum.** `brain.py` sizes the context window from that `result` event
+(`_Turn.context_tokens`), so every turn that uses tools counts the window
+once per model call. The question above counted as about 147,700 tokens, less
+a baseline of 12,048, against a real window of about 37,000.
+
+The baseline is wrong too, and in the same direction: the warm-up's full
+prompt was 36,744 tokens, but it arrived as 12,046 read from cache plus 24,696
+written to it, and `context_tokens` excludes the written part — correct only
+for a sum across calls. Per call, the prompt is all three columns; the next
+call read exactly 36,742 from cache.
+
+This is `brain.py`'s, predates phase 5, and is fixed separately: the window
+is the LAST model call's prompt, not the turn's total.
+
+### Gates
+
+`cd electron && npm test`: 41 passed. `pytest`: 2585 passed, 4 failed in
+`tests/test_specs_api.py`, failing identically on `main` — a real project on
+this machine leaking into the specs list through `~/.claude`, raised
+separately.
+
 ## What would make this design wrong
 
 Stated so it is falsifiable — and with the caveat phase 4 earned: **this list

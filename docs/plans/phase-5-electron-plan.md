@@ -1175,7 +1175,12 @@ git commit -m "electron: say so when the configured recogniser cannot work here"
 
 ---
 
-### Task 8: Run it, and write down what happened
+### Task 8: Run it, and write down what happened — **DONE 2026-09-11**
+
+> Ken ran it and it worked; what the records show, what they cannot, and
+> the brain-rotation defect the run exposed are in `phase-5-electron.md`,
+> "What running it found". Phase 5 is marked done on Windows in
+> `cross-platform-port.md`.
 
 **This task is the deliverable, not a formality.** Phase 4c shipped with "the
 page half has never been run against a live JARVIS" written into its own
