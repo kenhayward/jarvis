@@ -2155,7 +2155,18 @@ git commit -m "CI: run the Electron tests, which until now ran only on request"
 
 ---
 
-### Task 12: A fresh clone, for real — and the documentation
+### Task 12: A fresh clone, for real — and the documentation — **DONE 2026-09-11, except the sign-out test and the Mac**
+
+> Fresh clone: ten steps, exit 0, 43s (warm caches), on Python 3.14. Update:
+> 3s. Lockfile change: only that step re-ran (6s), and again on restoring it;
+> then 3s. Ken launched it from the Start menu and talked to it; his four
+> findings (window icon, Electron's menu, no route to the dashboard, toasts
+> titled "Electron") were fixed and confirmed on the clone through
+> `git pull` + `install.py`. Docs written: the spec's "What running it
+> found", CLAUDE.md's Quick Start and Key Files, the phase table, the
+> pick-up doc. **Not done:** Step 4 (a real sign-out/in — Ken had sessions
+> running) and Step 5's clean-up (the Start-menu entry still points at the
+> clone, kept for Step 4); the Mac.
 
 **This is the deliverable**, as phase 5's Task 8 was.
 

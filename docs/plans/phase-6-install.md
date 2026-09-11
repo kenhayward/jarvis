@@ -201,6 +201,81 @@ of them the spike's, while its four Electron processes ran.
 **Verdict: Task 10 keeps the design** — at login the window is created with
 `show: false` and never flashed. The fallback is not needed.
 
+## What running it found — 2026-09-11
+
+### A fresh clone, for real
+
+`git clone --branch feat/phase-6-install` into `D:\Repositories\jarvis-install-test`
+— no venv, no `node_modules`, no voices, no `.env` — then `py install.py`:
+**all ten steps, exit 0, in 43 seconds.** That figure is flattered by warm
+caches on this box (pip's, npm's, Electron's download, and the whisper model
+in the Hugging Face cache); a genuinely new machine spends minutes more,
+downloading. What it did: a `.venv` on **Python 3.14.6** — `py` answers 3.14
+here, and every package, CTranslate2 and onnxruntime included, installed
+cleanly, so the worry noted in Task 3 did not materialise — a `.env` created
+with whisper and piper (no `say` here), the piper voice downloaded, both npm
+trees installed, the Electron binary unpacked, the shortcut written, and
+preflight's verdict.
+
+**Updating** — `git pull` and run it again — took **3 seconds** with nothing to
+do. **Changing one lockfile** (a blank line appended to Electron's) re-ran
+exactly that step, `npm ci` and the unpack, in 6s; restoring it re-ran it once
+more, as the changed hash says it must; a third run skipped everything in 3s.
+Python packages were skipped throughout.
+
+### Ken, talking to it
+
+Launched from the Start menu — the ring icon — it was the clone's own
+`electron.exe` and the clone's own venv running `server.py --no-ssl`, checked
+in the process table. Its brain heard "What sessions do we have open,
+jarvis?", listed six, then went into the Trypthos session on request and
+answered "is anything waiting for me?". **It worked.**
+
+**Four things no test could reach, all fixed the same day and confirmed by
+Ken on the clone** (each fix pulled into it with `git pull` and a re-run —
+the update path, exercised for real):
+
+1. **The title bar showed Electron's icon.** The taskbar takes the shortcut's;
+   the window needs its own — `icon: jarvis.ico`.
+2. **Electron's default menu bar** (File/Edit/View, reload and DevTools on it)
+   showed in the window — `removeMenu()` on each window.
+3. **There was no way to reach the dashboard**: in Chrome you type
+   `/dashboard`; the app has no address bar. The tray gained **Dashboard**,
+   opening it in a window of its own so the orb never stops listening.
+4. **Notices were titled "Electron".** Windows names a toast's source by the
+   process's AppUserModelID; it is now `JARVIS`, and the taskbar icon stayed
+   the ring.
+
+### Found on the way, recorded in the plan task by task
+
+- `npm ci` while JARVIS runs fails with **`EPERM`** (`unlink`, `errno -4048`)
+  on a DLL in Electron's `dist`, after deleting what it could.
+- `.env`'s **first occurrence wins**, so the block `install.py` appends could be
+  silently overridden by a live line in `.env.example`; the created file is
+  judged as the server reads it.
+- Electron's login entry is named **`electron.app.Electron`** by default —
+  shared by every unpackaged Electron app — and
+  **`getLoginItemSettings().openAtLogin` is true for any entry with the same
+  command**, even after ours was removed. The entry is named `JARVIS`; the
+  checkbox reads the named list.
+- A checkout path like `Ken's $HOME & 100% (copy)` round-trips through the
+  shortcut exactly.
+
+### Heard but not chased
+
+Whisper transcribed two phantom utterances in the live run — "Beep. Beep.
+Beep. Beep." and "T-shirt, t-shirt, t-shirt…" — hallucinations on background
+noise; JARVIS answered both as not requests. A speech-recognition matter
+(phase 4's territory), not an installation one.
+
+### Not done yet
+
+- **Start with Windows, for real** — tick it, sign out and in — and the
+  spoken check of a JARVIS started hidden. The checkbox, the Run entry and
+  the hidden start are verified; a real login is not.
+- **The Mac.** Everything macOS-shaped in `install.py` (no Start menu, so it
+  prints the launch command; `.venv/bin/python`; brew hints) is UNVERIFIED.
+
 ## What would make this design wrong
 
 * ~~**A window that has never been shown may not capture audio.**~~

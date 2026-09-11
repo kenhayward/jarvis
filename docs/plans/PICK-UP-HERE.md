@@ -4,8 +4,9 @@ Paste the block below into a fresh Claude Code session in this repository.
 Everything in it is checkable against the repo — if a claim here disagrees
 with the code, trust the code and fix this file.
 
-Last updated 2026-09-11, at the end of the Windows session that built phase 5
-— the Electron application — and merged it (PR #41). Before that, 2026-09-09,
+Last updated 2026-09-11, late, at the end of the Windows session that built
+phase 6 — `install.py` (PR #44) — after phase 5, the Electron application,
+merged that morning (PR #41). Before that, 2026-09-09,
 the session that closed phase 3's last two items, `claude.cmd` and the
 terminal launcher: both "verify a guess" tasks, both guesses wrong in the same
 direction. Phase 5 went the same way — nearly every task's plan was wrong
@@ -95,15 +96,30 @@ behaviour, the tray; the first-hide notice is Windows-only), and barge-in
 and hidden-window speech rest on Ken's "it worked" rather than a recorded
 measurement. See "If you are on the Mac" below.
 
-OPEN: PR #42 — the live run exposed that brain.py rotated its context after
-ONE question. A stream-json `result` event reports usage SUMMED over the
-turn's model calls, and the brain sized its window from it, so a turn with
-tools counted the window once per call. Measured, fixed, tested there; not
-merged as of this writing. Once it is, rotation comes at 120k of ACTUAL
+MERGED, PR #42 — phase 5's live run exposed that brain.py rotated its context
+after ONE question. A stream-json `result` event reports usage SUMMED over
+the turn's model calls, and the brain sized its window from it, so a turn
+with tools counted the window once per call. Now the window is the last
+call's prompt, all three input columns. Rotation comes at 120k of ACTUAL
 conversation — much later than before — and JARVIS_BRAIN_CONTEXT_BUDGET is
 the lever if that is too far.
 
-Next in the phase table: phase 6, Windows packaging and release.
+PHASE 6 IS BUILT AND VERIFIED ON WINDOWS (2026-09-11, PR #44 — open as of
+this writing). It was redefined in design with Ken: the audience is his own
+machines, so not an installer but `install.py` — `py install.py` /
+`python3 install.py` from a checkout, and again after every `git pull`. Ten
+steps, standard library only, each checking before it acts; it never edits
+an existing `.env`. docs/plans/phase-6-install.md — read "What running it
+found" — and phase-6-install-plan.md, task by task. A fresh clone installed
+in 43s (warm caches), updates take 3s, and Ken talked to it. The app gained
+"Start with Windows" (tray, off by default, starts with no window — measured:
+a never-shown window captures 99.9%), a Dashboard window, its own window
+icon, no Electron menu, and notices titled JARVIS.
+Still open: a real sign-out/in with Start with Windows ticked, and the Mac —
+see "If you are on the Mac" below.
+
+Next in the phase table: phase 7, optional (a container or remote speech
+sidecar).
 
 Also due: phase 3's continue-on-error deferral. It was "after phase 4", and
 phase 4 is done. It is blocked on issue #36 — the Windows speech-chain
@@ -173,7 +189,7 @@ here:
 - Run the full suite (bare `pytest`, no flags) before pushing, and the
   frontend gates (cd frontend && npx tsc --noEmit && npm run build) if you
   touch frontend/. If you touch electron/, run `cd electron && npm test` —
-  CI does not run it.
+  CI runs it too since phase 6, but it is quicker to know first.
 - PRs go to kenhayward/jarvis: gh pr create --repo kenhayward/jarvis --base main
 ```
 
@@ -196,14 +212,21 @@ and reporting the number. The last figure recorded here for macOS is 2523
 passed / 2 failed, from *before* any of this work — it is stale, and nobody
 has re-run it since.
 
-The second useful thing is **phase 5 on a Mac**, because every macOS line of
-`electron/` was written on the Windows box and is marked UNVERIFIED:
+The second useful thing is **phases 5 and 6 on a Mac**, because every macOS
+line of `electron/` and `install.py` was written on the Windows box and is
+marked UNVERIFIED. One run exercises both:
 
 ```bash
-cd electron && npm install && node node_modules/electron/install.js && npm start
+python3 install.py
+cd electron && npm start
 ```
 
-Worth reporting: whether the microphone works first time or macOS's TCC
+`python3` must be 3.11 or newer — the one macOS ships is 3.9, and the script
+says so and stops. Worth reporting from `install.py`: every step's line and
+the time; that step 9 prints the launch command instead of a shortcut; the
+`.env` step's verdict on the Mac's existing `.env` (it will not change it);
+and preflight's Accessibility and Screen Recording results. Then from the app:
+whether the microphone works first time or macOS's TCC
 prompt appears (`main.js` calls `askForMediaAccess`; a packaged build will
 also need `NSMicrophoneUsageDescription`, which a dev `npm start` does not
 exercise); whether Quit from the tray takes the brain with it (on Windows the
@@ -268,3 +291,12 @@ Two corrections to the handoff's setup section, from doing it again on
   on a dev box.
 - Do not widen `electron/policy.js`'s grant. The window holds the
   microphone; it grants the JARVIS origin's microphone and nothing else.
+- Do not give `install.py` a non-standard-library import. It runs before the
+  venv it creates exists, and a test fails the build if it tries.
+- Do not let `install.py` edit an existing `.env`. It creates a missing one
+  and diagnoses the rest — a program that rewrites configuration behind you
+  is harder to trust than one that explains.
+- Do not let the login entry fall back to Electron's default name, or read
+  "starts at login" from `openAtLogin`: the name is shared by every
+  unpackaged Electron app, and `openAtLogin` answers yes for any entry with
+  the same command (measured, phase 6 Task 10).
