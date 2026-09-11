@@ -454,3 +454,71 @@ def shortcut(ctx: Context) -> str:
     argv = [powershell, "-NoProfile", "-NonInteractive", "-Command", SHORTCUT_PS1]
     must(run(argv, env=env), argv, "PowerShell could not write the shortcut")
     return f"wrote {link}"
+
+
+PREFLIGHT = (
+    "import asyncio, json, preflight\n"
+    "found = asyncio.run(preflight.run_checks())\n"
+    "print(json.dumps([{'name': c.name, 'status': c.status, 'message': c.message,"
+    " 'remedy': c.remedy} for c in found]))"
+)
+
+
+def checks(ctx: Context) -> str:
+    """JARVIS's own first-run checks, through the venv with the server's
+    environment. Reported, never a stop: this is the last step, and the most
+    likely finding -- Claude Code not logged in -- is Ken's to fix."""
+    argv = [str(venv_python(ctx.root)), "-c", PREFLIGHT]
+    result = must(run(argv, cwd=ctx.root, env=effective_env(ctx)), argv, "preflight did not run")
+    found = json.loads(result.stdout.strip().splitlines()[-1])
+    lines = []
+    for c in found:
+        lines.append(f"  {c['status']} {c['name']}: {c['message']}")
+        if c.get("remedy"):
+            lines.append(f"       -> {c['remedy']}")
+    bad = sum(1 for c in found if c["status"] != "ok")
+    head = "all checks passed" if not bad else f"{bad} check(s) need attention"
+    return head + "\n" + "\n".join(lines)
+
+
+STEPS = [
+    ("prerequisites", prerequisites),
+    ("venv", venv),
+    ("Python packages", python_packages),
+    ("Playwright Chromium", playwright),
+    (".env", dotenv),
+    ("models", models),
+    ("frontend", frontend),
+    ("Electron", electron),
+    ("Start-menu shortcut", shortcut),
+    ("preflight", checks),
+]
+
+
+def main(*, root: Path = REPO, env: dict | None = None) -> int:
+    try:
+        sys.stdout.reconfigure(errors="replace")     # a tool's output may hold anything
+    except AttributeError:
+        pass
+    ctx = Context(root=root, env=dict(os.environ if env is None else env))
+    for number, (name, step) in enumerate(STEPS, 1):
+        print(f"[{number}/{len(STEPS)}] {name}", flush=True)
+        try:
+            status = step(ctx)
+        except StepFailed as failure:
+            print(f"      FAILED: {failure.message}")
+            if failure.command:
+                print("      command: " + " ".join(failure.command))
+            for line in failure.output.strip().splitlines()[-20:]:
+                print("      | " + line)
+            print("Stopped. Fix that and run install.py again -- finished steps are skipped.")
+            return 1
+        for line in status.splitlines():
+            print("      " + line, flush=True)
+    print("Done. Start JARVIS from the Start menu (or as step 9 said); "
+          "run install.py again after every git pull.")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

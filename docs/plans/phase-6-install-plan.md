@@ -1700,7 +1700,25 @@ git commit -m "install.py: a Start-menu entry, its paths never in the script tex
 
 ---
 
-### Task 9: Preflight, and `main()`
+### Task 9: Preflight, and `main()` — **DONE 2026-09-11**
+
+> **`py install.py` ran end to end on the working checkout: all ten steps,
+> exit 0, 3.1 seconds** with nothing to do. Preflight's real verdict: Claude
+> Code 2.1.248 logged in, the piper voice, `claude` a real program; warnings
+> for crossSessionInbound and screen capture (known), and an
+> `ANTHROPIC_BASE_URL` that came from the Claude Code session this ran
+> inside, not from Ken's `.env`.
+>
+> **One change outside `install.py`:** `tests/test_header_lines.py`'s rail —
+> every function that builds text from a session or run field must be
+> driven with a hostile value or exempted in words — found `install.checks`
+> reading a key named `status`. It is a preflight verdict printed to a
+> terminal, and nothing imports `install.py`; that reasoning is now an
+> `EXEMPT` entry, not a rename that would dodge the rail.
+>
+> Full suite: 2639 passed; the four known `test_specs_api.py` failures, and
+> `test_dashboard_page.py::test_a_stale_roster_reading_is_visible` once —
+> 3/3 alone and 16/16 as a file afterwards, a first sighting of it flaking.
 
 **Files:**
 - Modify: `install.py` (append)

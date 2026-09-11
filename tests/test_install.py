@@ -527,3 +527,51 @@ def test_no_powershell_is_a_stop(tmp_path, rec, monkeypatch):
     ctx, _ = start_menu_ctx(tmp_path)
     with pytest.raises(install.StepFailed, match="powershell"):
         install.shortcut(ctx)
+
+
+# --- preflight and main ------------------------------------------------------
+
+def test_preflight_reports_every_check_with_its_remedy(tmp_path, rec):
+    fake_venv(tmp_path)
+    rec.reply(lambda a: a[1:2] == ["-c"] and a[2] == install.PREFLIGHT, ok(_json.dumps([
+        {"name": "claude_cli", "status": "ok", "message": "claude 2.1.300", "remedy": None},
+        {"name": "claude_login", "status": "fail", "message": "not logged in",
+         "remedy": "run `claude` and log in"},
+    ]) + "\n"))
+    status = install.checks(make_ctx(tmp_path))
+    assert status.startswith("1 check(s) need attention")
+    assert "fail claude_login: not logged in" in status and "run `claude` and log in" in status
+
+
+def test_the_steps_run_in_the_specs_order():
+    assert [name for name, _ in install.STEPS] == [
+        "prerequisites", "venv", "Python packages", "Playwright Chromium", ".env",
+        "models", "frontend", "Electron", "Start-menu shortcut", "preflight"]
+
+
+def test_main_stops_at_the_first_failure_and_shows_what_failed(tmp_path, monkeypatch, capsys):
+    ran = []
+
+    def fine(ctx):
+        ran.append("fine")
+        return "done"
+
+    def broken(ctx):
+        ran.append("broken")
+        raise install.StepFailed("it broke", ["/x/tool", "go"], "line 1\nline 2 the reason\n")
+
+    def never(ctx):
+        ran.append("never")
+        return "done"
+
+    monkeypatch.setattr(install, "STEPS", [("one", fine), ("two", broken), ("three", never)])
+    assert install.main(root=tmp_path, env={}) == 1
+    assert ran == ["fine", "broken"]
+    out = capsys.readouterr().out
+    assert "FAILED: it broke" in out and "/x/tool go" in out and "line 2 the reason" in out
+
+
+def test_main_says_so_when_everything_ran(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(install, "STEPS", [("one", lambda ctx: "done")])
+    assert install.main(root=tmp_path, env={}) == 0
+    assert "[1/1] one" in capsys.readouterr().out
