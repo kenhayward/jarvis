@@ -57,10 +57,23 @@ through faster-whisper base.en, and speaks through piper. Read
 docs/plans/phase-4-speech.md if you touch the voice path.
 
 The next work is phase 5, the Electron application:
-docs/plans/phase-5-electron.md. It DEPARTS FROM THE PLAN IN TWO WAYS and
+docs/plans/phase-5-electron.md (spec) and phase-5-electron-plan.md (8 tasks).
+It DEPARTS FROM THE PLAN IN TWO WAYS and
 says so at the top — built Windows-first rather than macOS-first, and it is
 an application (tray-resident, supervising its own server) rather than the
 "shell" the phase table called it.
+
+PHASE 5 PROGRESS (2026-09-11): Tasks 1 and 2 DONE. Task 3 (health.js — tell
+a JARVIS from anything else on the port) is next.
+
+Task 1's answer changes Task 5 and is already written into the plan: a
+HIDDEN Electron window loses a third of its captured audio (visible 100.0%,
+hidden 67.1%, over ten minutes) unless webPreferences.backgroundThrottling is
+false (95.7%). Throttling starts within ~30s of hiding — a short test cannot
+see it. It hits AudioWorklet too, so moving capture off the main thread does
+not fix it. A two-minute transient dip in the fixed run is UNEXPLAINED; if a
+tray JARVIS ever drops words, re-measure that first, with a visible control.
+The full five-run record, including a wrong turn, is in the spec.
 
 Also now due: phase 3's continue-on-error deferral. It was "after phase 4",
 and phase 4 is done. It is blocked on issue #36 — three test_speech.py

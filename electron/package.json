@@ -1,0 +1,14 @@
+{
+  "name": "jarvis-electron",
+  "version": "0.1.0",
+  "private": true,
+  "description": "The JARVIS desktop application.",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "test": "node --test \"test/*.test.js\""
+  },
+  "devDependencies": {
+    "electron": "^44.3.0"
+  }
+}

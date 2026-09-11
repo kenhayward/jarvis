@@ -7266,22 +7266,40 @@ if FRONTEND_DIST.exists():
 DEFAULT_BIND_HOST = web_auth.JARVIS_DEFAULT_HOST
 
 
-if __name__ == "__main__":
+def _arg_parser():
     import argparse
-    import uvicorn
 
     parser = argparse.ArgumentParser(description="JARVIS Server")
     parser.add_argument("--host", default=DEFAULT_BIND_HOST,
                         help="Bind host (default: loopback only)")
     parser.add_argument("--port", type=int, default=8340, help="Bind port")
     parser.add_argument("--reload", action="store_true", help="Auto-reload on changes")
-    parser.add_argument("--ssl", action="store_true", help="Enable HTTPS with key.pem/cert.pem")
-    args = parser.parse_args()
+    # --ssl / --no-ssl, and neither means "HTTPS if the certs are there".
+    # --no-ssl exists for the Electron application, which loads plain
+    # http://127.0.0.1 and cannot follow a server that switched to HTTPS
+    # because the dev workflow's certs happened to be beside it.
+    parser.add_argument("--ssl", action=argparse.BooleanOptionalAction, default=None,
+                        help="Force HTTPS with key.pem/cert.pem on or off "
+                             "(default: on when both files exist)")
+    return parser
 
-    # Auto-detect SSL certs
+
+def _use_ssl(choice, here):
+    """Whether to serve HTTPS: `choice` is --ssl (True), --no-ssl (False) or
+    neither (None), and neither auto-detects the certs in `here`."""
+    if choice is not None:
+        return choice
+    return (here / "cert.pem").exists() and (here / "key.pem").exists()
+
+
+if __name__ == "__main__":
+    import uvicorn
+
+    args = _arg_parser().parse_args()
+
     cert_file = Path(__file__).parent / "cert.pem"
     key_file = Path(__file__).parent / "key.pem"
-    use_ssl = args.ssl or (cert_file.exists() and key_file.exists())
+    use_ssl = _use_ssl(args.ssl, Path(__file__).parent)
 
     proto = "https" if use_ssl else "http"
     ws_proto = "wss" if use_ssl else "ws"

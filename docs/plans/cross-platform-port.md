@@ -18,7 +18,7 @@ below in two ways it states up front.
 | 2 | The platform layer, macOS only | Mac | **merged** (PR #4) |
 | 3 | `jarvis_platform/windows/` — first Windows build | Windows | **code complete** 2026-09-09; the CI gate deferral has now come DUE — blocked on issue #36 |
 | 4 | [The speech sidecar](phase-4-speech.md) | Mac, verified on Windows | **DONE** 2026-09-10 — 4-zero, 4a, 4b, 4c; 4d cuttable |
-| 5 | [The Electron application](phase-5-electron.md) | **Windows first**, by decision | **designed** 2026-09-10 |
+| 5 | [The Electron application](phase-5-electron.md) | **Windows first**, by decision | **DONE on Windows** 2026-09-11 (PR #41) — run by hand and working; macOS parts written but UNVERIFIED |
 | 6 | Windows packaging and release | Windows | not started |
 | 7 | Optional: container / remote speech sidecar | either | not started |
 

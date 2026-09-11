@@ -29,8 +29,9 @@ server's own page — there is no bundled copy of the frontend.
 
 ## Global Constraints
 
-- **`server.py` is not modified by this phase.** Phase 4 closed; this moves
-  the window the page lives in and nothing else.
+- **`server.py` is not modified by this phase — with ONE exception, decided
+  2026-09-11:** `--no-ssl`, which the supervisor always passes (see Task 4).
+  Phase 4 closed; this moves the window the page lives in and nothing else.
 - **Electron must never start a second server.** Two servers means two brains
   on one Claude subscription and two writers on one SQLite database.
   `run_store` is not built for that.
@@ -52,7 +53,14 @@ server's own page — there is no bundled copy of the frontend.
 
 ---
 
-### Task 1: Does audio survive a hidden window?
+### Task 1: Does audio survive a hidden window? — **DONE 2026-09-11**
+
+> **Answered: no, not by default.** A hidden window loses a third of its
+> audio; `webPreferences.backgroundThrottling: false` removes the
+> sustained loss (67.1% -> 95.7%). Full record, including a wrong turn,
+> in `phase-5-electron.md`. **Task 5 below has been corrected to carry
+> the fix** — without it the tray would silently lose a third of
+> everything said to it.
 
 **This task comes first because it can invalidate the design.** The spec names
 it as the most likely thing to be wrong and the cheapest to test: Chromium
@@ -174,7 +182,7 @@ git commit -m "Phase 5 spike: whether audio survives a hidden window"
 
 ---
 
-### Task 2: Finding the Python interpreter
+### Task 2: Finding the Python interpreter — **DONE 2026-09-11** (`1a57c33`)
 
 **Files:**
 - Create: `electron/package.json`
@@ -303,7 +311,25 @@ git commit -m "electron: find the venv interpreter, both platform names"
 
 ---
 
-### Task 3: Deciding whether to attach or spawn
+### Task 3: Deciding whether to attach or spawn — **DONE 2026-09-11**
+
+> **Built, with two corrections the code below does not carry** — the
+> committed `electron/health.js` and its tests are the truth. Both were found
+> by probing a real JARVIS and real sockets rather than fakes, and both tests
+> were watched failing against this plan's code first:
+>
+> 1. **Only a refused connection is "nothing".** A JARVIS started with
+>    `cert.pem`/`key.pem` beside `server.py` serves HTTPS, and an `http://`
+>    fetch of it throws `UND_ERR_SOCKET`, not `ECONNREFUSED`. The code below
+>    catches every throw as "nothing", so a running JARVIS would have been
+>    reported as an empty port and Task 4 would have started a second server
+>    over it. Any other failure is now "stranger".
+> 2. **The probe has a timeout** (`PROBE_TIMEOUT_MS`, 5s; `probe`'s third
+>    argument, `waitForJarvis`'s `probeTimeoutMs`). A listener that accepts
+>    and never answers held the code below past 15s (undici waits 300s), so
+>    `waitForJarvis`'s own deadline never came round.
+>
+> 10 tests, 7 of them against real listeners on ephemeral ports.
 
 **Files:**
 - Create: `electron/health.js`
@@ -444,7 +470,51 @@ git commit -m "electron: tell a JARVIS from anything else on the port"
 
 ---
 
-### Task 4: The server's lifecycle
+### Task 4: The server's lifecycle — **DONE 2026-09-11**
+
+> **Decided: the flag** (Ken, 2026-09-11). `server.py --ssl/--no-ssl`, with
+> `tests/test_ssl_choice.py`; the supervisor spawns `server.py --host <h>
+> --port <p> --no-ssl`, both taken from the origin. The committed
+> `electron/server.js` is the truth; beyond the code below it also:
+>
+> - **fails at once when the server exits or cannot spawn** before answering
+>   (both hung the code below — watched), and listens for `"error"`, whose
+>   unhandled throw would crash Electron's main process;
+> - **kills a server it gave up waiting for**, rather than leave it running
+>   behind a "failed";
+> - **names the likeliest occupant** of an occupied port (a dev JARVIS on
+>   HTTPS).
+>
+> **Measured on Windows, not assumed:** `child.kill()` on the venv's
+> `python.exe` — a redirector whose child is the real interpreter — took the
+> whole tree (interpreter, brain, the brain's MCP child) and freed the port.
+> So did Node exiting WITHOUT calling `stop()`. A run killed mid-flight is
+> already failed by `run_store`'s sweep on the next start. macOS: UNVERIFIED.
+> End to end with the real supervisor and real servers: nothing on the port
+> -> started (825ms) and gone after `stop()`; a JARVIS there -> attached and
+> still up after `stop()`; an HTTPS JARVIS -> occupied.
+>
+> The decision as it was put:
+>
+> **OPEN DECISION before this task starts (found in Task 3, 2026-09-11).**
+> `server.py` switches HTTPS on by itself when `cert.pem` and `key.pem` are
+> beside it — measured: a real JARVIS on this box, started with no `--ssl`,
+> served TLS. The dev-server workflow requires those certs, so on any
+> developer's machine the `spawn(python, ["server.py", "--host",
+> "127.0.0.1"])` below starts an HTTPS server, the `http://` health poll never
+> sees it, and every launch ends `failed`. Two ways out:
+>
+> - **A `--no-ssl` flag on `server.py`** (off by default, one argparse line,
+>   one pytest), passed by the supervisor. Breaks the "server.py is not
+>   modified" constraint, but touches nothing on the voice path.
+> - **Spawn `python -m uvicorn server:app` instead**, which does not look for
+>   certs, setting `JARVIS_PORT`/`JARVIS_SCHEME`/`JARVIS_BIND_HOST` itself.
+>   Keeps the constraint, but duplicates `main()`'s startup — and `main()`'s
+>   own comment records a bug from those two entrypoints drifting apart.
+>
+> Recommended: the flag. Separately, "occupied" is also what a developer's
+> own HTTPS JARVIS now reports (Task 3's correction 1), so its `detail` should
+> name that likely cause rather than just "not JARVIS".
 
 **Files:**
 - Create: `electron/server.js`
@@ -652,7 +722,48 @@ git commit -m "electron: attach, spawn, and kill only what we started"
 
 ---
 
-### Task 5: The window, and the permission handler
+### Task 5: The window, and the permission handler — **DONE 2026-09-11, one hand check pending**
+
+> **Built with three additions the code below does not carry** — the committed
+> `electron/main.js` and `electron/policy.js` are the truth:
+>
+> 1. **The permission handler grants the JARVIS page's microphone and nothing
+>    else.** The code below said yes to `media` for whatever page the window
+>    showed, camera included. `policy.js` (`sameOrigin`, `grantsPermission`,
+>    tested) checks the requesting origin as a parsed origin and requires
+>    `mediaTypes` to be audio only. Verified live: Electron 44 reports
+>    `requestingUrl: "http://127.0.0.1:8340/"` and `mediaTypes: ["audio"]`,
+>    and every request is logged, granted or denied.
+> 2. **The window only shows JARVIS.** Off-origin navigation and every
+>    `window.open` are refused in the window; http(s) ones open in the
+>    user's browser (`shell.openExternal` would hand any scheme to the OS).
+>    Nothing in the page navigates today; this is the window that holds the
+>    microphone, so it is locked anyway.
+> 3. **One instance.** A second copy would attach to the first one's server
+>    and have it killed from under it when the first quit; it shows the
+>    first instead (`requestSingleInstanceLock`).
+>
+> `npm install` does not unpack the Electron binary; `node
+> node_modules/electron/install.js` does, from the cache Task 1 filled.
+>
+> **Verified live on Windows:** with nothing on 8340, `npm start` spawned
+> `server.py --host 127.0.0.1 --port 8340 --no-ssl`, printed `server:
+> started`, and opened one window titled JARVIS and no console window (the
+> supervisor's `windowsHide`). The page connected its voice socket, capture
+> started on the Yeti Nano, and the brain came up. Closing the window quit
+> the app and left nothing: port free, no server processes.
+>
+> **Attach branch verified** (during Task 6, 2026-09-11): the app attached to
+> a stand-in JARVIS on 8341, Ken quit it from the tray, the app left no
+> process behind, and the stand-in still answered `/api/health`. With Task
+> 4's end-to-end run (a real server attached, still up after `stop()`),
+> that is Step 4.
+>
+> **Pending (Ken on a call, no audio):** a real conversation through the
+> window. The first run logged `mic: DEAF ... the
+> recogniser has returned nothing for 3s` two seconds after capture began;
+> with whisper the page sends speech only after a pause, so it may be a
+> false alarm. Unexamined.
 
 **Files:**
 - Create: `electron/main.js`
@@ -735,6 +846,13 @@ function createWindow() {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,
       nodeIntegration: false,
+      // REQUIRED for tray residency. Measured in Task 1: a hidden window with
+      // the default (true) captured 67.1% of its audio over ten minutes, the
+      // same window visible captured 100.0%, and with this set to false it
+      // captured 95.7%. Throttling starts within ~30s of hiding. Without this
+      // line, closing JARVIS to the tray loses a third of what is said to it,
+      // and it transcribes as garbage rather than failing cleanly.
+      backgroundThrottling: false,
     },
   });
   win.loadURL(ORIGIN);
@@ -793,7 +911,38 @@ git commit -m "electron: a window, a supervised server, and a microphone"
 
 ---
 
-### Task 6: The tray, and what quit means
+### Task 6: The tray, and what quit means — **DONE 2026-09-11, Step 4.3 pending**
+
+> **Built with two changes to the code below** — the committed `main.js` is
+> the truth:
+>
+> 1. **`reallyQuitting` is set in `before-quit`, not only by the tray's
+>    Quit.** As written below, any other quit (Cmd+Q on macOS, anything
+>    calling `app.quit()`) runs `before-quit` -- which stops the server --
+>    and then the window's close handler cancels the quit by hiding: a
+>    hidden JARVIS with no server. Every quit passes through `before-quit`,
+>    so that is where the flag belongs. Windows logoff/shutdown does not
+>    emit `before-quit` (documentation, not exercised), so the window's
+>    `session-end` sets it too.
+> 2. **The first hide says where JARVIS went**, once per run, silently: a
+>    tray balloon, "JARVIS is still listening -- closing the window hides
+>    it; to quit, use the tray icon". The spec says Quit must be findable,
+>    and closing hides an application that still holds the microphone.
+>    Windows only; macOS gets nothing yet. The tooltip reads "JARVIS
+>    (listening)".
+>
+> **Verified on Windows, silently** — against a stand-in on 8341 that
+> answers `/api/health` as JARVIS and serves a blank page (no microphone,
+> no voice), with `JARVIS_ORIGIN=http://127.0.0.1:8341`: the app attached;
+> `WM_CLOSE` to the window (what its X sends) hid it with the app still
+> running; a second `npm start` exited within a second without supervising
+> anything and brought the window back to the front.
+>
+> **By hand, Ken, same stand-in:** the window's X hid it and the balloon
+> appeared; Quit JARVIS from the tray exited the app — no Electron process
+> left — and the stand-in, which the app attached to rather than started,
+> still answered. **Pending:** Step 4.3, speaking to a hidden JARVIS, waits
+> for audio.
 
 **Files:**
 - Modify: `electron/main.js`
@@ -885,7 +1034,38 @@ git commit -m "electron: closing hides, the tray quits"
 
 ---
 
-### Task 7: Saying so when the backend is deaf
+### Task 7: Saying so when the backend is deaf — **DONE 2026-09-11, dialog display pending**
+
+> **Built with one more case and one more argument** — the committed
+> `electron/backend.js` is the truth:
+>
+> - **Whisper configured but not installed is deaf too.** `stt.transcribe`
+>   returns `None` for every utterance when the package or the model is
+>   missing, and says so only in the server log — which a window the app
+>   started gives nobody a reason to read. `/api/settings/status` already
+>   reports `stt_backends_ready.whisper`; `false` there now warns, with the
+>   install and model-fetch commands from `requirements-stt.txt`. Absent
+>   (an older server), it says nothing rather than guess.
+> - **`sttWarning(status, python)`**: the app knows the venv's interpreter
+>   (`findPython`), so the commands are the user's own, quoted when the path
+>   has a space.
+> - The status fetch has a 5s timeout, like every other probe here.
+>
+> **Verified against the real server's payloads** (bare servers on 8341, no
+> page, silent): `JARVIS_STT_BACKEND=browser` -> the browser warning;
+> `whisper` with `HF_HOME` pointed at an empty directory ->
+> `stt_backends_ready.whisper: false` -> the install warning, with this
+> box's interpreter path; `whisper` installed -> `null`.
+>
+> **Pending:** the dialog actually appearing in Electron. Not shown yet
+> because a Windows warning box may sound and Ken was on a call; Task 8's
+> live run covers it.
+>
+> Also fixed on the way: the heredoc that wrote Task 4's
+> `test/server.test.js` had collapsed the doubled backslash in
+> `"C:\\repo"` to a single one, and in JavaScript `\r` is a carriage return:
+> the path held one mid-way. Its tests passed anyway, comparing a mangled
+> constant to itself; they now use a real Windows path.
 
 **Files:**
 - Modify: `electron/main.js`
@@ -995,7 +1175,12 @@ git commit -m "electron: say so when the configured recogniser cannot work here"
 
 ---
 
-### Task 8: Run it, and write down what happened
+### Task 8: Run it, and write down what happened — **DONE 2026-09-11**
+
+> Ken ran it and it worked; what the records show, what they cannot, and
+> the brain-rotation defect the run exposed are in `phase-5-electron.md`,
+> "What running it found". Phase 5 is marked done on Windows in
+> `cross-platform-port.md`.
 
 **This task is the deliverable, not a formality.** Phase 4c shipped with "the
 page half has never been run against a live JARVIS" written into its own
@@ -1029,7 +1214,7 @@ Do all of this, in order, and note what happens at each point:
 - [ ] **Step 2: Run both gates**
 
 ```bash
-cd electron && node --test test/
+cd electron && npm test
 cd .. && .venv/Scripts/python -m pytest -q
 ```
 
@@ -1043,6 +1228,11 @@ Add a "What running it found" section to
 A phase that reports only successes is the one nobody trusts later.
 
 - [ ] **Step 4: Update the standing documentation**
+
+> **CLAUDE.md half DONE 2026-09-11**, ahead of the live run and written from
+> what was built rather than the draft below (which predates `policy.js`,
+> `backend.js`, `--no-ssl` and the measured throttling). Still to do here:
+> mark phase 5 done in `cross-platform-port.md` — after Step 1, not before.
 
 In `CLAUDE.md`, add `electron/` to the Key Files list:
 
