@@ -51,8 +51,12 @@ past a failure leaves a checkout that looks installed and is not.
    interpreter running the script), git, Node 22.12+ with npm, and a `claude`
    on PATH. The Node floor is Electron 44's own (`engines: >= 22.12.0`, and
    its downloader's); Vite accepts older. Each missing one is a one-line
-   hint — the winget or brew command that would install it — and nothing
-   more. The script never runs an installer for you.
+   hint — the winget or brew command that would install it, chosen by which
+   of the two this machine HAS — and nothing more. The script never runs an
+   installer for you. Python, Node and npm stop the script; a missing git
+   or `claude` is a note and it carries on, because nothing it installs
+   needs either — git is for the next `git pull`, and Claude Code is judged
+   properly by preflight at the end.
 2. **The venv.** Create `.venv` from the running interpreter, or keep an
    existing one if its Python is 3.11+. Its interpreter is found under BOTH
    platform names (`.venv/Scripts/python.exe`, `.venv/bin/python`), as
@@ -90,7 +94,11 @@ nobody will.
   `node_modules/`), and skip when it matches. Delete the venv and the stamp
   goes with it, so the next run reinstalls rather than trusting a stamp for
   something that is gone.
-* Steps 2, 4 and 6 skip when their product already exists.
+* Steps 2 and 6 skip when their product already exists. Step 4 always runs:
+  Playwright's own `install chromium` skips a browser it already has, which
+  is simpler and more reliable than this script guessing where Playwright
+  keeps them (it moves with `PLAYWRIGHT_BROWSERS_PATH`). The fresh-clone run
+  times it to hold that to account.
 * The frontend BUILD always runs: a pull can change `frontend/src` without
   touching the lockfile, and the build takes seconds.
 
