@@ -722,7 +722,43 @@ git commit -m "electron: attach, spawn, and kill only what we started"
 
 ---
 
-### Task 5: The window, and the permission handler
+### Task 5: The window, and the permission handler — **DONE 2026-09-11, two hand checks pending**
+
+> **Built with three additions the code below does not carry** — the committed
+> `electron/main.js` and `electron/policy.js` are the truth:
+>
+> 1. **The permission handler grants the JARVIS page's microphone and nothing
+>    else.** The code below said yes to `media` for whatever page the window
+>    showed, camera included. `policy.js` (`sameOrigin`, `grantsPermission`,
+>    tested) checks the requesting origin as a parsed origin and requires
+>    `mediaTypes` to be audio only. Verified live: Electron 44 reports
+>    `requestingUrl: "http://127.0.0.1:8340/"` and `mediaTypes: ["audio"]`,
+>    and every request is logged, granted or denied.
+> 2. **The window only shows JARVIS.** Off-origin navigation and every
+>    `window.open` are refused in the window; http(s) ones open in the
+>    user's browser (`shell.openExternal` would hand any scheme to the OS).
+>    Nothing in the page navigates today; this is the window that holds the
+>    microphone, so it is locked anyway.
+> 3. **One instance.** A second copy would attach to the first one's server
+>    and have it killed from under it when the first quit; it shows the
+>    first instead (`requestSingleInstanceLock`).
+>
+> `npm install` does not unpack the Electron binary; `node
+> node_modules/electron/install.js` does, from the cache Task 1 filled.
+>
+> **Verified live on Windows:** with nothing on 8340, `npm start` spawned
+> `server.py --host 127.0.0.1 --port 8340 --no-ssl`, printed `server:
+> started`, and opened one window titled JARVIS and no console window (the
+> supervisor's `windowsHide`). The page connected its voice socket, capture
+> started on the Yeti Nano, and the brain came up. Closing the window quit
+> the app and left nothing: port free, no server processes.
+>
+> **Pending (Ken on a call, no audio):** Step 4's attach branch — a server
+> started by hand must still be running after the app quits — and a real
+> conversation through the window. The first run logged `mic: DEAF ... the
+> recogniser has returned nothing for 3s` two seconds after capture began;
+> with whisper the page sends speech only after a pause, so it may be a
+> false alarm. Unexamined.
 
 **Files:**
 - Create: `electron/main.js`
