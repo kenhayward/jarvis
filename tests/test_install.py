@@ -257,3 +257,83 @@ def test_playwright_installs_chromium_through_the_venv(tmp_path, rec):
     exe = fake_venv(tmp_path)
     install.playwright(make_ctx(tmp_path))
     assert rec.argvs() == [[str(exe), "-m", "playwright", "install", "chromium"]]
+
+
+# --- .env --------------------------------------------------------------------
+
+EXAMPLE = "# JARVIS configuration\n# JARVIS_TTS_BACKEND=say\nUSER_NAME=\n"
+
+
+def with_example(root):
+    (root / ".env.example").write_text(EXAMPLE)
+    return root
+
+
+def say_is(present, monkeypatch):
+    monkeypatch.setattr(install, "which", lambda n: "/usr/bin/say" if (n == "say" and present) else None)
+
+
+def test_a_missing_env_is_made_from_the_example_with_the_ear_the_app_needs(tmp_path, monkeypatch):
+    say_is(True, monkeypatch)
+    install.dotenv(make_ctx(with_example(tmp_path)))
+    text = (tmp_path / ".env").read_text()
+    assert text.startswith(EXAMPLE)
+    assert "\nJARVIS_STT_BACKEND=whisper\n" in text
+    assert "\nJARVIS_TTS_BACKEND=piper\n" not in text, "say exists here; the default voice works"
+
+
+def test_without_say_the_new_env_names_a_voice_that_exists(tmp_path, monkeypatch):
+    say_is(False, monkeypatch)
+    install.dotenv(make_ctx(with_example(tmp_path)))
+    assert "\nJARVIS_TTS_BACKEND=piper\n" in (tmp_path / ".env").read_text()
+
+
+def test_jarvis_env_file_decides_which_file(tmp_path, monkeypatch):
+    say_is(True, monkeypatch)
+    elsewhere = tmp_path / "elsewhere" / ".env"
+    install.dotenv(make_ctx(with_example(tmp_path), env={"JARVIS_ENV_FILE": str(elsewhere)}))
+    assert elsewhere.exists() and not (tmp_path / ".env").exists()
+
+
+def test_an_existing_env_is_never_changed_only_diagnosed(tmp_path, monkeypatch):
+    say_is(False, monkeypatch)
+    original = b"JARVIS_STT_BACKEND=browser\r\n# mine\r\n"
+    (with_example(tmp_path) / ".env").write_bytes(original)
+    status = install.dotenv(make_ctx(tmp_path))
+    assert (tmp_path / ".env").read_bytes() == original
+    assert "hear nothing" in status and "JARVIS_STT_BACKEND=whisper" in status
+    assert "will not speak" in status and "JARVIS_TTS_BACKEND=piper" in status
+
+
+def test_a_good_existing_env_is_reported_as_fine(tmp_path, monkeypatch):
+    say_is(False, monkeypatch)
+    (with_example(tmp_path) / ".env").write_text(
+        "JARVIS_STT_BACKEND=whisper\nJARVIS_TTS_BACKEND=piper\n")
+    assert "nothing in it" in install.dotenv(make_ctx(tmp_path))
+
+
+def test_the_effective_env_is_the_servers_process_first_then_first_line():
+    """server.py loads .env with os.environ.setdefault per line: the process
+    environment wins, and within the file the FIRST occurrence does."""
+    ctx = make_ctx(Path("."), env={"JARVIS_STT_BACKEND": "whisper"})
+    lines = "JARVIS_STT_BACKEND=browser\nUSER_NAME=Ken\nUSER_NAME=Other\n"
+    got = install._merge_env(ctx.env, lines)
+    assert got["JARVIS_STT_BACKEND"] == "whisper" and got["USER_NAME"] == "Ken"
+
+
+def test_a_created_env_that_an_example_line_would_override_is_a_stop(tmp_path, monkeypatch):
+    """The server takes the FIRST occurrence of a key, and the block is
+    appended. An example that ever grows a live `JARVIS_STT_BACKEND=browser`
+    would win over it, and a freshly installed application would be deaf
+    with a .env that looks right. So the created file is judged as the
+    server will read it."""
+    say_is(True, monkeypatch)
+    (tmp_path / ".env.example").write_text("JARVIS_STT_BACKEND=browser\n")
+    with pytest.raises(install.StepFailed, match="hear nothing"):
+        install.dotenv(make_ctx(tmp_path))
+
+
+def test_fish_without_a_key_on_a_machine_without_say_is_mute():
+    problems = install.env_problems(
+        {"JARVIS_STT_BACKEND": "whisper", "JARVIS_TTS_BACKEND": "fish"}, have_say=False)
+    assert any("will not speak" in p for p in problems)

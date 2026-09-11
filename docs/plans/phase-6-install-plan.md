@@ -934,7 +934,19 @@ git commit -m "install.py: the venv, the three requirements files, Playwright"
 
 ---
 
-### Task 5: `.env` — created when missing, diagnosed never edited
+### Task 5: `.env` — created when missing, diagnosed never edited — **DONE 2026-09-11**
+
+> **One addition beyond the code below**, found by running it: the block is
+> APPENDED to `.env.example`, and the server takes the FIRST occurrence of a
+> key — so a live `JARVIS_STT_BACKEND=browser` ever added to the example
+> would silently override it and leave a freshly installed application deaf.
+> `dotenv` now judges the file it created as the server will read it and
+> stops if that happens (`test_a_created_env_that_an_example_line_would_override_is_a_stop`,
+> watched failing first). **Every later "Expected: N passed" is one higher.**
+>
+> Run for real: the working checkout's `.env` was reported fine and its hash
+> was unchanged; a `.env` created from the real `.env.example` got whisper,
+> and piper because this box has no `say`.
 
 **Files:**
 - Modify: `install.py` (append)

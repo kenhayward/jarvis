@@ -20,6 +20,9 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
+# The one definition of a .env line -- the server's own, not a copy.
+from env_file import parse_env_lines
+
 REPO = Path(__file__).resolve().parent
 MIN_PYTHON = (3, 11)
 # Electron 44's own floor -- its package.json `engines`, and its downloader's.
@@ -211,3 +214,76 @@ def playwright(ctx: Context) -> str:
     argv = [str(venv_python(ctx.root)), "-m", "playwright", "install", "chromium"]
     must(run(argv, cwd=ctx.root), argv, "Playwright could not install Chromium")
     return "Chromium ready"
+
+
+ENV_BLOCK_HEAD = "# --- added by install.py: what the desktop application needs on this machine ---"
+
+
+def env_path(ctx: Context) -> Path:
+    """JARVIS_ENV_FILE if set, else the repository's .env -- the server's rule."""
+    override = ctx.env.get("JARVIS_ENV_FILE", "").strip()
+    return Path(override) if override else ctx.root / ".env"
+
+
+def _merge_env(process: dict[str, str], dotenv_text: str) -> dict[str, str]:
+    """server.py's loader: `os.environ.setdefault` per line, so the process
+    environment wins and, within the file, the first occurrence does."""
+    merged = dict(process)
+    for key, value in parse_env_lines(dotenv_text):
+        merged.setdefault(key, value)
+    return merged
+
+
+def effective_env(ctx: Context) -> dict[str, str]:
+    """The environment the SERVER will run with."""
+    path = env_path(ctx)
+    text = path.read_text(encoding="utf-8") if path.exists() else ""
+    return _merge_env(ctx.env, text)
+
+
+def env_problems(env: dict[str, str], have_say: bool) -> list[str]:
+    """What in this configuration leaves the desktop application deaf or mute
+    here, each with the line that fixes it."""
+    out = []
+    stt = (env.get("JARVIS_STT_BACKEND") or "browser").strip().lower()
+    if stt != "whisper":
+        out.append(f"JARVIS_STT_BACKEND is {stt!r}: the desktop application will hear "
+                   f"nothing (Electron has no speech service). Add: JARVIS_STT_BACKEND=whisper")
+    tts = (env.get("JARVIS_TTS_BACKEND") or "say").strip().lower()
+    if tts == "fish" and not env.get("FISH_API_KEY", "").strip():
+        tts = "say"                     # tts.py falls back to `say` without a key
+    if tts not in ("piper", "fish") and not have_say:
+        out.append(f"JARVIS_TTS_BACKEND is {tts!r} and there is no `say` on this machine: "
+                   f"JARVIS will not speak. Add: JARVIS_TTS_BACKEND=piper")
+    return out
+
+
+def dotenv(ctx: Context) -> str:
+    """Create a missing .env; NEVER modify an existing one. A program that
+    rewrites configuration behind you is harder to trust than one that
+    explains (phase 5's rule)."""
+    path = env_path(ctx)
+    have_say = which("say") is not None
+    if path.exists():
+        problems = env_problems(effective_env(ctx), have_say)
+        if not problems:
+            return f"kept {path}; nothing in it stops the application hearing or speaking"
+        return f"kept {path} unchanged -- but:\n" + "\n".join(f"  {p}" for p in problems)
+    block = ["", ENV_BLOCK_HEAD,
+             "# Electron has no speech service: the browser's recogniser hears nothing there.",
+             "JARVIS_STT_BACKEND=whisper"]
+    if not have_say:
+        block += ["# There is no `say` on this machine, so the default voice would be silence.",
+                  "JARVIS_TTS_BACKEND=piper"]
+    example = (ctx.root / ".env.example").read_text(encoding="utf-8")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(example.rstrip("\n") + "\n" + "\n".join(block) + "\n", encoding="utf-8")
+    # Judged as the server will read it: the FIRST occurrence of a key wins,
+    # and the block is appended -- a live line in the example would override
+    # it and leave a .env that looks right and is deaf.
+    still = env_problems(effective_env(ctx), have_say)
+    if still:
+        raise StepFailed(f"created {path}, but a line in .env.example overrides what it "
+                         f"added:\n  " + "\n  ".join(still))
+    added = [line for line in block if line and not line.startswith("#")]
+    return f"created {path} from .env.example, adding " + ", ".join(added)
