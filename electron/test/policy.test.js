@@ -1,6 +1,6 @@
 const { test } = require("node:test");
 const assert = require("node:assert");
-const { sameOrigin, grantsPermission } = require("../policy");
+const { sameOrigin, grantsPermission, dashboardUrl } = require("../policy");
 
 const ORIGIN = "http://127.0.0.1:8340";
 
@@ -55,4 +55,13 @@ test("the JARVIS page gets nothing else it did not need", () => {
   for (const p of ["geolocation", "notifications", "clipboard-read", "openExternal"]) {
     assert.strictEqual(grantsPermission(p, jarvisPage(undefined), ORIGIN), false, p);
   }
+});
+
+// The dashboard opens in its own window, which carries the same navigation
+// lock as the voice window. So its address must be one the lock allows --
+// otherwise the window would refuse to show the very page it was opened for.
+test("the dashboard lives on the JARVIS origin", () => {
+  assert.strictEqual(dashboardUrl(ORIGIN), "http://127.0.0.1:8340/dashboard");
+  assert.strictEqual(sameOrigin(dashboardUrl(ORIGIN), ORIGIN), true);
+  assert.strictEqual(dashboardUrl("http://127.0.0.1:8341/"), "http://127.0.0.1:8341/dashboard");
 });

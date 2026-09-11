@@ -24,4 +24,11 @@ function grantsPermission(permission, details, origin) {
   return Array.isArray(types) && types.length > 0 && types.every((t) => t === "audio");
 }
 
-module.exports = { sameOrigin, grantsPermission };
+// The run monitor. It opens in a window of its own, so the voice window is
+// never navigated away from the orb (and never stops listening), and that
+// window carries the same navigation lock -- which this address must pass.
+function dashboardUrl(origin) {
+  return new URL("/dashboard", origin).href;
+}
+
+module.exports = { sameOrigin, grantsPermission, dashboardUrl };

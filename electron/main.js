@@ -2,7 +2,7 @@
 const { app, BrowserWindow, Menu, Tray, dialog, session, shell, systemPreferences } = require("electron");
 const path = require("node:path");
 const { createSupervisor } = require("./server");
-const { sameOrigin, grantsPermission } = require("./policy");
+const { sameOrigin, grantsPermission, dashboardUrl } = require("./policy");
 const { sttWarning } = require("./backend");
 const { findPython } = require("./python");
 const { startAtLoginSupported, loginItem, launchedAtLogin, startsAtLogin } = require("./login");
@@ -28,6 +28,7 @@ if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
   let win = null;
+  let dashboard = null;   // the run monitor's own window, when it is open
   let tray = null;        // held here so it is never garbage-collected away
   // The one flag that separates "the user closed the window" from "the
   // application is quitting". It is set in before-quit, which every quit
@@ -55,7 +56,10 @@ if (!app.requestSingleInstanceLock()) {
   }
 
   function trayMenu() {
-    const items = [{ label: "Show JARVIS", click: showWindow }];
+    const items = [
+      { label: "Show JARVIS", click: showWindow },
+      { label: "Dashboard", click: openDashboard },
+    ];
     if (startAtLoginSupported(process.platform)) {
       items.push({
         label: "Start with Windows",
@@ -152,11 +156,61 @@ if (!app.requestSingleInstanceLock()) {
     }
   }
 
+  // Both windows show JARVIS and nothing else: off-origin navigation and every
+  // window.open go to the user's own browser instead (openOutside).
+  function lockToOrigin(w) {
+    w.webContents.on("will-navigate", (event, url) => {
+      if (sameOrigin(url, ORIGIN)) return;
+      event.preventDefault();
+      openOutside(url);
+    });
+    w.webContents.setWindowOpenHandler(({ url }) => {
+      openOutside(url);
+      return { action: "deny" };
+    });
+  }
+
+  // The window's OWN icon -- the taskbar takes the shortcut's, but the title
+  // bar would otherwise show Electron's -- and no menu bar: Electron's
+  // default File/Edit/View menu is a developer's, with reload and DevTools
+  // on it. removeMenu is per window on Windows and Linux; macOS keeps its
+  // application menu, which Cmd+Q and copy/paste need there.
+  const ICON = path.join(__dirname, "jarvis.ico");
+
+  // The run monitor, in a window of its own so the voice window is never
+  // navigated away from the orb and never stops listening. Closing it
+  // closes it; the tray opens it again.
+  function openDashboard() {
+    if (dashboard) {
+      if (dashboard.isMinimized()) dashboard.restore();
+      dashboard.show();
+      dashboard.focus();
+      return;
+    }
+    dashboard = new BrowserWindow({
+      width: 1200,
+      height: 850,
+      title: "JARVIS dashboard",
+      icon: ICON,
+      backgroundColor: "#111111",
+      webPreferences: {
+        preload: path.join(__dirname, "preload.js"),
+        contextIsolation: true,
+        nodeIntegration: false,
+      },
+    });
+    dashboard.removeMenu();
+    lockToOrigin(dashboard);
+    dashboard.on("closed", () => { dashboard = null; });
+    dashboard.loadURL(dashboardUrl(ORIGIN));
+  }
+
   function createWindow() {
     win = new BrowserWindow({
       width: 1100,
       height: 800,
       title: "JARVIS",
+      icon: ICON,
       backgroundColor: "#111111",
       // At login, the tray and not a window -- still listening: phase 6's
       // Task 1 measured a never-shown window capturing 99.9%, no gesture.
@@ -174,15 +228,8 @@ if (!app.requestSingleInstanceLock()) {
         backgroundThrottling: false,
       },
     });
-    win.webContents.on("will-navigate", (event, url) => {
-      if (sameOrigin(url, ORIGIN)) return;
-      event.preventDefault();
-      openOutside(url);
-    });
-    win.webContents.setWindowOpenHandler(({ url }) => {
-      openOutside(url);
-      return { action: "deny" };
-    });
+    win.removeMenu();
+    lockToOrigin(win);
     // Closing HIDES. The server keeps running and JARVIS keeps listening --
     // the whole point of tray residency, and only sound because Task 1
     // measured audio surviving a hidden window (with backgroundThrottling
