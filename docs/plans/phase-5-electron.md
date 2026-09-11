@@ -78,6 +78,15 @@ There is no Vite here. `http://127.0.0.1` is a secure context by the same rule
 that makes `localhost` one, so `getUserMedia` works over plain HTTP, and
 `server.py` already serves HTTP when the certs are absent.
 
+**Absent was the catch** (found in Task 3, 2026-09-11). Any machine that has
+run the dev workflow has the certs, and `server.py` then switches HTTPS on by
+itself — a server the application started served TLS to its own `http://`
+health poll. `server.py` gained `--no-ssl` (it already had `--ssl`; now it is
+`--ssl`/`--no-ssl`, and neither still means "if the certs are there"), and
+the application always passes it. That is the one change this phase makes to
+`server.py`, and it was Ken's call over spawning `uvicorn server:app`, which
+would have kept `server.py` untouched at the price of a second startup path.
+
 That removes the openssl step from the Electron path entirely. It does NOT
 remove it from the dev-server workflow, which still needs them; both remain
 true and the setup docs should say which is which.

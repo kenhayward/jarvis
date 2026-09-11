@@ -42,7 +42,8 @@ When a user clones this repo and starts Claude Code, help them:
 
 **The certs are required for the dev-server workflow**, despite `server.py`
 treating them as optional. `server.py` serves HTTPS only when `cert.pem` and
-`key.pem` are both beside it, but `frontend/vite.config.ts` hard-codes its
+`key.pem` are both beside it (and `--no-ssl` was not passed — the Electron
+application passes it, because it loads plain `http://127.0.0.1`), but `frontend/vite.config.ts` hard-codes its
 proxy target as `https://localhost:8340`. Measured with a stand-in backend on
 8340 and `npx vite`: with a plain-HTTP backend the Vite dev server itself
 answers 200 while every proxied `/api` request returns **500**; with an HTTPS
