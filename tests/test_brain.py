@@ -121,7 +121,7 @@ async def test_start_warms_up_and_becomes_ready(tmp_path):
     try:
         assert await b.start() is True
         assert b.ready and b.session_id == "fake-session-0001" and b.model_in_use == "claude-sonnet-5-fake"
-        assert b.context_tokens == 10 + 9000          # cache_creation is not the window; see test_turn_streams_deltas_and_accounts
+        assert b.context_tokens == 10 + 9000 + 1000   # the whole prompt, cache writes included; see test_turn_streams_deltas_and_accounts
     finally:
         await b.stop()
     assert not b.running
@@ -139,11 +139,11 @@ async def test_turn_streams_deltas_and_accounts(tmp_path):
         assert "".join(deltas) == "Echo: hello there" == r.text
         assert r.first_delta_sec is not None and r.first_delta_sec < 2
         # The fake reports input=10, cache_read=18000, cache_creation=1000 on
-        # this turn. The window is the prompt as sent -- input plus what was
-        # read from cache. The 1000 of cache CREATION is that same prompt
-        # being written into the cache, not more of it; counting it once
-        # made a cache miss look like the conversation doubling.
-        assert r.context_tokens == 10 + 18000 and b.context_tokens == r.context_tokens
+        # this turn's one model call. The window is that call's whole prompt:
+        # what was read from cache, what was written to it, and the rest.
+        # Measured -- the next call reads all of it back. See test_rotation's
+        # test_a_cache_miss_and_a_cache_hit_are_the_same_window.
+        assert r.context_tokens == 10 + 18000 + 1000 and b.context_tokens == r.context_tokens
         assert r.origin == "user"
     finally:
         # A failing assert above must still stop the brain: its child holds
