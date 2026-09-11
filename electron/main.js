@@ -5,7 +5,9 @@ const { createSupervisor } = require("./server");
 const { sameOrigin, grantsPermission, dashboardUrl } = require("./policy");
 const { sttWarning } = require("./backend");
 const { findPython } = require("./python");
-const { startAtLoginSupported, loginItem, launchedAtLogin, startsAtLogin } = require("./login");
+const {
+  LOGIN_NAME, startAtLoginSupported, loginItem, launchedAtLogin, startsAtLogin,
+} = require("./login");
 
 const ORIGIN = process.env.JARVIS_ORIGIN || "http://127.0.0.1:8340";
 const REPO_ROOT = path.resolve(__dirname, "..");
@@ -27,6 +29,12 @@ const STARTED_AT_LOGIN = launchedAtLogin(process.argv);
 if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
+  // Windows names the source of every notification -- the tray's balloons
+  // are shown as toasts -- by the process's AppUserModelID. An unpackaged
+  // Electron app's default is Electron's own, so Ken's first live run saw
+  // "Electron" on JARVIS's notices. Windows-only API; the same name the
+  // login entry uses (login.js), for the same reason.
+  if (process.platform === "win32") app.setAppUserModelId(LOGIN_NAME);
   let win = null;
   let dashboard = null;   // the run monitor's own window, when it is open
   let tray = null;        // held here so it is never garbage-collected away
