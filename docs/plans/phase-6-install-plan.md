@@ -345,7 +345,15 @@ git commit -m "env_file: the one .env parser, importable without the venv"
 
 ---
 
-### Task 3: `install.py`'s spine, and the prerequisites
+### Task 3: `install.py`'s spine, and the prerequisites — **DONE 2026-09-11**
+
+> Run for real on the Windows box: `Python 3.14.6, node v24.16.0`, with
+> `npm` found as `C:\Program Files\nodejs\npm.CMD` — the case the full-path
+> rule exists for. **Note for Task 12:** `py` here is 3.14, so a fresh
+> clone's venv will be 3.14, not the existing checkout's 3.13. If
+> CTranslate2 (faster-whisper) or onnxruntime (piper) publish no 3.14
+> wheels, pip fails there — and the answer is a Python version floor or
+> ceiling, measured, not guessed.
 
 **Files:**
 - Create: `install.py`
