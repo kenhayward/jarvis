@@ -3,9 +3,9 @@ const assert = require("node:assert");
 const { EventEmitter } = require("node:events");
 const { createSupervisor } = require("../server");
 
-const REPO = "C:\repo";
+const REPO = "C:\\repo";
 const ORIGIN = "http://127.0.0.1:8340";
-const PYTHON = "C:\repo\.venv\Scripts\python.exe";
+const PYTHON = "C:\\repo\\.venv\\Scripts\\python.exe";
 
 // A stand-in child process: a real EventEmitter, because the supervisor
 // listens for "exit" and "error" and a child that cannot emit them would let
