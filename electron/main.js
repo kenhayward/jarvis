@@ -1,5 +1,5 @@
 "use strict";
-const { app, BrowserWindow, dialog, session, shell, systemPreferences } = require("electron");
+const { app, BrowserWindow, Menu, Tray, dialog, session, shell, systemPreferences } = require("electron");
 const path = require("node:path");
 const { createSupervisor } = require("./server");
 const { sameOrigin, grantsPermission } = require("./policy");
@@ -23,14 +23,53 @@ if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
   let win = null;
+  let tray = null;        // held here so it is never garbage-collected away
+  // The one flag that separates "the user closed the window" from "the
+  // application is quitting". It is set in before-quit, which every quit
+  // passes through -- the tray's Quit, Cmd+Q, anything that calls
+  // app.quit(). Set only by the tray, any other quit would stop the server
+  // in before-quit and then have the window's close handler cancel the quit
+  // by hiding: a hidden JARVIS with no server behind it.
+  let reallyQuitting = false;
+  let toldAboutTheTray = false;
   const supervisor = createSupervisor({ repoRoot: REPO_ROOT, origin: ORIGIN, deps: { log } });
 
-  app.on("second-instance", () => {
+  function showWindow() {
     if (!win) return;
     if (win.isMinimized()) win.restore();
     win.show();
     win.focus();
-  });
+  }
+
+  app.on("second-instance", showWindow);
+
+  function createTray() {
+    tray = new Tray(path.join(__dirname, "tray-icon.png"));
+    tray.setToolTip("JARVIS (listening)");
+    tray.setContextMenu(Menu.buildFromTemplate([
+      { label: "Show JARVIS", click: showWindow },
+      { type: "separator" },
+      // Quit must be findable. An application a person cannot work out how
+      // to exit is worse than one that simply closes when you close it.
+      { label: "Quit JARVIS", click: () => app.quit() },
+    ]));
+    tray.on("double-click", showWindow);
+  }
+
+  // The first time the window is closed, say where JARVIS went. Closing
+  // hides an application that still holds the microphone, and the person
+  // who closed it has every reason to think it has gone. Once per run, and
+  // silent -- a notice about listening should not make a sound. The balloon
+  // is Windows-only; macOS gets nothing here yet.
+  function explainTheTray() {
+    if (toldAboutTheTray || !tray || process.platform !== "win32") return;
+    toldAboutTheTray = true;
+    tray.displayBalloon({
+      title: "JARVIS is still listening",
+      content: "Closing the window hides it. To quit, use the tray icon.",
+      noSound: true,
+    });
+  }
 
   function grantMicrophone() {
     // Mandatory: Electron DENIES media unless this handler exists (measured
@@ -105,6 +144,21 @@ if (!app.requestSingleInstanceLock()) {
       openOutside(url);
       return { action: "deny" };
     });
+    // Closing HIDES. The server keeps running and JARVIS keeps listening --
+    // the whole point of tray residency, and only sound because Task 1
+    // measured audio surviving a hidden window (with backgroundThrottling
+    // off, above).
+    win.on("close", (event) => {
+      if (reallyQuitting) return;
+      event.preventDefault();
+      win.hide();
+      explainTheTray();
+    });
+    // Windows logoff and shutdown do NOT emit before-quit (Electron's
+    // documentation; not exercised here), so the window hears it instead --
+    // without this, the close handler above would hide and hold up the
+    // session ending.
+    win.on("session-end", () => { reallyQuitting = true; });
     win.on("closed", () => { win = null; });
     win.loadURL(ORIGIN);
     return win;
@@ -123,10 +177,15 @@ if (!app.requestSingleInstanceLock()) {
       return;
     }
     createWindow();
+    createTray();
   });
 
-  // Task 6 replaces this with tray behaviour. Until then, closing quits.
-  app.on("window-all-closed", () => app.quit());
+  // Deliberately does nothing. Closing the window hides it; the application
+  // exits through the tray's Quit, or any other app.quit().
+  app.on("window-all-closed", () => {});
 
-  app.on("before-quit", () => supervisor.stop());
+  app.on("before-quit", () => {
+    reallyQuitting = true;
+    supervisor.stop();
+  });
 }

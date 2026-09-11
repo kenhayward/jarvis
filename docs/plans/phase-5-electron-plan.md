@@ -906,7 +906,37 @@ git commit -m "electron: a window, a supervised server, and a microphone"
 
 ---
 
-### Task 6: The tray, and what quit means
+### Task 6: The tray, and what quit means — **DONE 2026-09-11, tray menu check pending**
+
+> **Built with two changes to the code below** — the committed `main.js` is
+> the truth:
+>
+> 1. **`reallyQuitting` is set in `before-quit`, not only by the tray's
+>    Quit.** As written below, any other quit (Cmd+Q on macOS, anything
+>    calling `app.quit()`) runs `before-quit` -- which stops the server --
+>    and then the window's close handler cancels the quit by hiding: a
+>    hidden JARVIS with no server. Every quit passes through `before-quit`,
+>    so that is where the flag belongs. Windows logoff/shutdown does not
+>    emit `before-quit` (documentation, not exercised), so the window's
+>    `session-end` sets it too.
+> 2. **The first hide says where JARVIS went**, once per run, silently: a
+>    tray balloon, "JARVIS is still listening -- closing the window hides
+>    it; to quit, use the tray icon". The spec says Quit must be findable,
+>    and closing hides an application that still holds the microphone.
+>    Windows only; macOS gets nothing yet. The tooltip reads "JARVIS
+>    (listening)".
+>
+> **Verified on Windows, silently** — against a stand-in on 8341 that
+> answers `/api/health` as JARVIS and serves a blank page (no microphone,
+> no voice), with `JARVIS_ORIGIN=http://127.0.0.1:8341`: the app attached;
+> `WM_CLOSE` to the window (what its X sends) hid it with the app still
+> running; a second `npm start` exited within a second without supervising
+> anything and brought the window back to the front.
+>
+> **Pending:** the tray menu itself (Show, Quit) and the balloon, which
+> need a person's click and eyes; Quit against the stand-in is also the
+> attach case — the stand-in must still answer afterwards. And Step 4.3,
+> speaking to a hidden JARVIS, waits for audio.
 
 **Files:**
 - Modify: `electron/main.js`
