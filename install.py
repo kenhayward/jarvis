@@ -408,3 +408,49 @@ def electron(ctx: Context) -> str:
     parts = ["installed dependencies" if installed else "dependencies unchanged",
              "unpacked the binary" if unpacked else "binary present"]
     return "; ".join(parts)
+
+
+# Every path arrives as an environment variable. None is ever part of this
+# text: phase 3 found a launcher whose quoting had never worked, because a
+# shell re-parsed a path it was handed inside a command line.
+SHORTCUT_PS1 = (
+    "$ErrorActionPreference = 'Stop'\n"
+    "$s = (New-Object -ComObject WScript.Shell).CreateShortcut($env:JARVIS_LNK)\n"
+    "$s.TargetPath = $env:JARVIS_TARGET\n"
+    "$s.Arguments = '\"' + $env:JARVIS_APP + '\"'\n"
+    "$s.WorkingDirectory = $env:JARVIS_APP\n"
+    "$s.IconLocation = $env:JARVIS_ICON\n"
+    "$s.Description = 'JARVIS'\n"
+    "$s.Save()\n"
+)
+
+
+def start_menu(ctx: Context) -> Path | None:
+    """The per-user Start-menu Programs folder, if this machine has one --
+    asked of the machine rather than of its operating system's name."""
+    appdata = ctx.env.get("APPDATA", "").strip()
+    if not appdata:
+        return None
+    programs = Path(appdata) / "Microsoft" / "Windows" / "Start Menu" / "Programs"
+    return programs if programs.is_dir() else None
+
+
+def shortcut(ctx: Context) -> str:
+    """Rewritten on every run, so a moved checkout is mended the way it was
+    installed. macOS: prints the launch command -- a Mac .app is out of scope."""
+    app_dir = ctx.root / "electron"
+    programs = start_menu(ctx)
+    if programs is None:
+        return f"no Start menu here; launch JARVIS with:  cd \"{app_dir}\" && npm start"
+    exe = electron_exe(ctx.root)
+    if exe is None:
+        raise StepFailed("no Electron binary to point the shortcut at")
+    powershell = which("powershell")
+    if not powershell:
+        raise StepFailed("no `powershell` on PATH to write the Start-menu shortcut with")
+    link = programs / "JARVIS.lnk"
+    env = dict(ctx.env, JARVIS_LNK=str(link), JARVIS_TARGET=str(exe),
+               JARVIS_APP=str(app_dir), JARVIS_ICON=str(app_dir / "jarvis.ico"))
+    argv = [powershell, "-NoProfile", "-NonInteractive", "-Command", SHORTCUT_PS1]
+    must(run(argv, env=env), argv, "PowerShell could not write the shortcut")
+    return f"wrote {link}"

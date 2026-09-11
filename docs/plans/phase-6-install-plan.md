@@ -1481,7 +1481,15 @@ git commit -m "install.py: the frontend and Electron, by their lockfiles"
 
 ---
 
-### Task 8: The Start-menu entry
+### Task 8: The Start-menu entry — **DONE 2026-09-11**
+
+> Run for real: `JARVIS.lnk` written to Ken's Start menu and read back through
+> COM — target this checkout's `electron.exe`, arguments the quoted
+> `electron` folder, working directory that folder, icon `jarvis.ico,0`.
+> **Beyond the plan**, the same from a scratch checkout named
+> `Ken's $HOME & 100% (copy)`: all three fields came back exact — no `$HOME`
+> expansion, `%` and `&` literal, the apostrophe intact. Launching it (the
+> real JARVIS, with audio) is left to Task 12.
 
 **Files:**
 - Create: `electron/jarvis.ico`

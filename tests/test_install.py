@@ -473,3 +473,57 @@ def test_an_unpack_that_leaves_no_binary_is_a_stop(tmp_path, rec):
     ctx = npm_ctx(tmp_path)
     with pytest.raises(install.StepFailed, match="no binary"):
         install.electron(ctx)
+
+
+# --- the Start-menu entry ----------------------------------------------------
+
+def start_menu_ctx(root):
+    programs = root / "appdata" / "Microsoft" / "Windows" / "Start Menu" / "Programs"
+    programs.mkdir(parents=True)
+    fake_electron_binary(root)
+    return make_ctx(root, env={"APPDATA": str(root / "appdata")}), programs
+
+
+def with_powershell(monkeypatch):
+    monkeypatch.setattr(install, "which",
+                        lambda n: "/fake/powershell.exe" if n == "powershell" else None)
+
+
+def test_the_shortcut_launches_this_checkouts_electron_with_the_app(tmp_path, rec, monkeypatch):
+    with_powershell(monkeypatch)
+    ctx, programs = start_menu_ctx(tmp_path)
+    install.shortcut(ctx)
+    (call,) = rec.calls
+    assert call["argv"][0] == "/fake/powershell.exe" and call["argv"][-1] == install.SHORTCUT_PS1
+    env = call["env"]
+    assert env["JARVIS_LNK"] == str(programs / "JARVIS.lnk")
+    assert env["JARVIS_TARGET"] == str(install.electron_exe(tmp_path))
+    assert env["JARVIS_APP"] == str(tmp_path / "electron")
+    assert env["JARVIS_ICON"] == str(tmp_path / "electron" / "jarvis.ico")
+
+
+def test_paths_reach_powershell_only_through_its_environment(tmp_path, rec, monkeypatch):
+    """Phase 3's launcher lesson: a shell that re-parses a path will one day
+    meet one it breaks on. No path is ever part of the script's text."""
+    with_powershell(monkeypatch)
+    odd = tmp_path / "Ken's $HOME & 100% (copy)"
+    odd.mkdir()
+    ctx, _ = start_menu_ctx(odd)
+    install.shortcut(ctx)
+    (call,) = rec.calls
+    assert not any(str(odd) in a or "Ken's" in a for a in call["argv"])
+    assert "$env:JARVIS_LNK" in install.SHORTCUT_PS1
+
+
+def test_where_there_is_no_start_menu_it_says_how_to_launch(tmp_path, rec, monkeypatch):
+    with_powershell(monkeypatch)
+    fake_electron_binary(tmp_path)
+    status = install.shortcut(make_ctx(tmp_path, env={}))
+    assert rec.calls == [] and "npm start" in status
+
+
+def test_no_powershell_is_a_stop(tmp_path, rec, monkeypatch):
+    monkeypatch.setattr(install, "which", lambda n: None)
+    ctx, _ = start_menu_ctx(tmp_path)
+    with pytest.raises(install.StepFailed, match="powershell"):
+        install.shortcut(ctx)
