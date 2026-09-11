@@ -29,8 +29,9 @@ server's own page — there is no bundled copy of the frontend.
 
 ## Global Constraints
 
-- **`server.py` is not modified by this phase.** Phase 4 closed; this moves
-  the window the page lives in and nothing else.
+- **`server.py` is not modified by this phase — with ONE exception, decided
+  2026-09-11:** `--no-ssl`, which the supervisor always passes (see Task 4).
+  Phase 4 closed; this moves the window the page lives in and nothing else.
 - **Electron must never start a second server.** Two servers means two brains
   on one Claude subscription and two writers on one SQLite database.
   `run_store` is not built for that.
@@ -469,8 +470,32 @@ git commit -m "electron: tell a JARVIS from anything else on the port"
 
 ---
 
-### Task 4: The server's lifecycle
+### Task 4: The server's lifecycle — **DONE 2026-09-11**
 
+> **Decided: the flag** (Ken, 2026-09-11). `server.py --ssl/--no-ssl`, with
+> `tests/test_ssl_choice.py`; the supervisor spawns `server.py --host <h>
+> --port <p> --no-ssl`, both taken from the origin. The committed
+> `electron/server.js` is the truth; beyond the code below it also:
+>
+> - **fails at once when the server exits or cannot spawn** before answering
+>   (both hung the code below — watched), and listens for `"error"`, whose
+>   unhandled throw would crash Electron's main process;
+> - **kills a server it gave up waiting for**, rather than leave it running
+>   behind a "failed";
+> - **names the likeliest occupant** of an occupied port (a dev JARVIS on
+>   HTTPS).
+>
+> **Measured on Windows, not assumed:** `child.kill()` on the venv's
+> `python.exe` — a redirector whose child is the real interpreter — took the
+> whole tree (interpreter, brain, the brain's MCP child) and freed the port.
+> So did Node exiting WITHOUT calling `stop()`. A run killed mid-flight is
+> already failed by `run_store`'s sweep on the next start. macOS: UNVERIFIED.
+> End to end with the real supervisor and real servers: nothing on the port
+> -> started (825ms) and gone after `stop()`; a JARVIS there -> attached and
+> still up after `stop()`; an HTTPS JARVIS -> occupied.
+>
+> The decision as it was put:
+>
 > **OPEN DECISION before this task starts (found in Task 3, 2026-09-11).**
 > `server.py` switches HTTPS on by itself when `cert.pem` and `key.pem` are
 > beside it — measured: a real JARVIS on this box, started with no `--ssl`,
