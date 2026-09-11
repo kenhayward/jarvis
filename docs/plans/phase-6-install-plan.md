@@ -2099,7 +2099,12 @@ git commit -m "electron: Start with Windows, off by default, starting in the tra
 
 ---
 
-### Task 11: CI runs the Electron tests
+### Task 11: CI runs the Electron tests — **DONE 2026-09-11**
+
+> Checked as CI will run it: `ELECTRON_SKIP_BINARY_DOWNLOAD=1 npm ci` left no
+> binary, and all 48 Electron tests passed without one. The workflow parses,
+> with the two new steps between the frontend build and the Python suite.
+> CI's first real run of them is the next push.
 
 **Files:**
 - Modify: `.github/workflows/tests.yml`
