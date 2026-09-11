@@ -310,7 +310,25 @@ git commit -m "electron: find the venv interpreter, both platform names"
 
 ---
 
-### Task 3: Deciding whether to attach or spawn
+### Task 3: Deciding whether to attach or spawn — **DONE 2026-09-11**
+
+> **Built, with two corrections the code below does not carry** — the
+> committed `electron/health.js` and its tests are the truth. Both were found
+> by probing a real JARVIS and real sockets rather than fakes, and both tests
+> were watched failing against this plan's code first:
+>
+> 1. **Only a refused connection is "nothing".** A JARVIS started with
+>    `cert.pem`/`key.pem` beside `server.py` serves HTTPS, and an `http://`
+>    fetch of it throws `UND_ERR_SOCKET`, not `ECONNREFUSED`. The code below
+>    catches every throw as "nothing", so a running JARVIS would have been
+>    reported as an empty port and Task 4 would have started a second server
+>    over it. Any other failure is now "stranger".
+> 2. **The probe has a timeout** (`PROBE_TIMEOUT_MS`, 5s; `probe`'s third
+>    argument, `waitForJarvis`'s `probeTimeoutMs`). A listener that accepts
+>    and never answers held the code below past 15s (undici waits 300s), so
+>    `waitForJarvis`'s own deadline never came round.
+>
+> 10 tests, 7 of them against real listeners on ephemeral ports.
 
 **Files:**
 - Create: `electron/health.js`
@@ -452,6 +470,26 @@ git commit -m "electron: tell a JARVIS from anything else on the port"
 ---
 
 ### Task 4: The server's lifecycle
+
+> **OPEN DECISION before this task starts (found in Task 3, 2026-09-11).**
+> `server.py` switches HTTPS on by itself when `cert.pem` and `key.pem` are
+> beside it — measured: a real JARVIS on this box, started with no `--ssl`,
+> served TLS. The dev-server workflow requires those certs, so on any
+> developer's machine the `spawn(python, ["server.py", "--host",
+> "127.0.0.1"])` below starts an HTTPS server, the `http://` health poll never
+> sees it, and every launch ends `failed`. Two ways out:
+>
+> - **A `--no-ssl` flag on `server.py`** (off by default, one argparse line,
+>   one pytest), passed by the supervisor. Breaks the "server.py is not
+>   modified" constraint, but touches nothing on the voice path.
+> - **Spawn `python -m uvicorn server:app` instead**, which does not look for
+>   certs, setting `JARVIS_PORT`/`JARVIS_SCHEME`/`JARVIS_BIND_HOST` itself.
+>   Keeps the constraint, but duplicates `main()`'s startup — and `main()`'s
+>   own comment records a bug from those two entrypoints drifting apart.
+>
+> Recommended: the flag. Separately, "occupied" is also what a developer's
+> own HTTPS JARVIS now reports (Task 3's correction 1), so its `detail` should
+> name that likely cause rather than just "not JARVIS".
 
 **Files:**
 - Create: `electron/server.js`
@@ -1043,7 +1081,7 @@ Do all of this, in order, and note what happens at each point:
 - [ ] **Step 2: Run both gates**
 
 ```bash
-cd electron && node --test test/
+cd electron && npm test
 cd .. && .venv/Scripts/python -m pytest -q
 ```
 
