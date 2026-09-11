@@ -228,7 +228,7 @@ git commit -m "Phase 6 spike: whether a never-shown window captures audio"
 
 ---
 
-### Task 2: One definition of a `.env` line, importable without the venv
+### Task 2: One definition of a `.env` line, importable without the venv — **DONE 2026-09-11** (`cf77e06`)
 
 **Files:**
 - Create: `env_file.py`
