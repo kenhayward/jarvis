@@ -168,15 +168,44 @@ not what the application last wrote.
   from login) live in `electron/login.js`, with no Electron import and tested
   with `node:test`, beside `server.js` and `policy.js`. `main.js` wires them.
 
+## Task 1: does a never-shown window capture audio? — MEASURED 2026-09-11
+
+**Yes, as well as a visible one, and with no user gesture.** A throwaway
+Electron 44.3.0 app created its window with `show: false` and
+`backgroundThrottling: false` — exactly what `main.js` will do at login — and
+loaded a page that, like `frontend/src/main.ts`, started capture on its own a
+second after load: `getUserMedia({audio: true})` into a 16 kHz `AudioContext`
+and a `ScriptProcessorNode`, as `capture.ts` does, with a second context
+standing in for playback. Nothing was ever clicked. Captured samples counted
+against wall-clock time, nothing else holding the microphone:
+
+| run | window | microphone | audio contexts, no gesture | captured |
+|---|---|---|---|---|
+| control, 5 min | shown | granted | both `running` | 4,796,416 / 4,800,008 — **99.9%** |
+| case, 5 min | never shown | granted | both `running` | 4,796,416 / 4,800,002 — **99.9%** |
+| check, 1 min | never shown | granted | both `running` | 958,464 / 960,024 — **99.8%** |
+
+The never-shown run is indistinguishable from the control at every ten-second
+mark — no dip, no decay — and better than phase 5's shown-then-hidden window
+(95.7%, with an unexplained two-minute dip). Nobody has to click the page for
+either context to run: Electron's default autoplay policy does not require
+one.
+
+**Checked from outside, not taken from Electron's word.** The page reports
+`document.visibilityState === "visible"` throughout — the mechanism of
+`backgroundThrottling: false`, which phase 5 also saw, not a sign the window
+showed. So during the one-minute check the desktop's visible top-level windows
+were enumerated with `jarvis_platform.windows.screen.windows()`: twelve, none
+of them the spike's, while its four Electron processes ran.
+
+**Verdict: Task 10 keeps the design** — at login the window is created with
+`show: false` and never flashed. The fallback is not needed.
+
 ## What would make this design wrong
 
-* **A window that has never been shown may not capture audio.** Phase 5's
-  Task 1 measured a window shown and then hidden; starting hidden is a
-  different state, and Chromium may not grant or run capture in it at all.
-  **This is measured first**, the way phase 5 measured its own biggest risk
-  first. If it fails, "tray-only at login" becomes "open the window, then hide
-  it once the microphone is live" — a visible flash at login, and still
-  listening.
+* ~~**A window that has never been shown may not capture audio.**~~
+  **It does — measured, see "Task 1" above: 99.9% against a visible
+  control's 99.9%, with no gesture.**
 * **`setLoginItemSettings` for an unpackaged app on Windows** is documented to
   take a path and arguments. It is written from that documentation and must
   be checked by reading the registry after ticking the box, then by actually

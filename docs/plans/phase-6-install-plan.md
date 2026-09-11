@@ -70,7 +70,13 @@ side gains `electron/login.js` (pure, `node:test`-tested) and a checkbox in
 
 ---
 
-### Task 1: Does a window that was never shown capture audio?
+### Task 1: Does a window that was never shown capture audio? — **DONE 2026-09-11**
+
+> **Answered: yes.** Never shown, no gesture: 99.9% over five minutes against
+> a shown control's 99.9%, and 99.8% on a one-minute check during which the
+> window was confirmed absent from the desktop. Both audio contexts ran
+> without a click. Task 10 keeps `show: false` at login; no fallback. Full
+> record in `phase-6-install.md`.
 
 **This task comes first because it can change Task 10.** Phase 5 measured a
 window shown and then hidden. Started at login, the window is never shown at
