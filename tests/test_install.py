@@ -153,3 +153,107 @@ def test_the_hint_follows_the_package_manager_the_machine_has(monkeypatch):
     assert install._install_hint("node") == "brew install node"
     monkeypatch.setattr(install, "which", lambda n: None)
     assert "PATH" in install._install_hint("node")
+
+
+# --- the venv ----------------------------------------------------------------
+
+def fake_venv(root, name=("Scripts", "python.exe")):
+    exe = root / ".venv" / Path(*name)
+    exe.parent.mkdir(parents=True, exist_ok=True)
+    exe.write_text("")
+    return exe
+
+
+def says_python(version):
+    return lambda argv: argv[1:2] == ["-c"] and "version_info" in argv[2], ok(version)
+
+
+def test_a_missing_venv_is_created_from_the_running_interpreter(tmp_path, rec):
+    rec.reply(lambda a: a[1:3] == ["-m", "venv"], ok(),
+              effect=lambda *_: fake_venv(tmp_path))
+    status = install.venv(make_ctx(tmp_path))
+    assert rec.argvs()[0] == ["/fake/python3", "-m", "venv", str(tmp_path / ".venv")]
+    assert status.startswith("created")
+
+
+def test_an_existing_venv_is_kept(tmp_path, rec):
+    fake_venv(tmp_path)
+    rec.reply(*says_python("3.13\n"))
+    status = install.venv(make_ctx(tmp_path))
+    assert not any(a[1:3] == ["-m", "venv"] for a in rec.argvs())
+    assert status.startswith("skipped")
+
+
+def test_a_venv_too_old_for_jarvis_is_refused_not_used(tmp_path, rec):
+    fake_venv(tmp_path)
+    rec.reply(*says_python("3.10\n"))
+    with pytest.raises(install.StepFailed, match="Delete .venv"):
+        install.venv(make_ctx(tmp_path))
+
+
+def test_the_venv_interpreter_is_found_under_either_platforms_name(tmp_path):
+    exe = fake_venv(tmp_path, ("bin", "python"))
+    assert install.venv_python(tmp_path) == exe
+
+
+# --- Python packages ---------------------------------------------------------
+
+def fake_requirements(root):
+    for name in install.REQUIREMENTS:
+        (root / name).write_text(f"# {name}\n")
+
+
+def is_pip(argv):
+    return argv[1:4] == ["-m", "pip", "install"]
+
+
+def test_packages_install_all_three_files_through_the_venv(tmp_path, rec):
+    exe = fake_venv(tmp_path)
+    fake_requirements(tmp_path)
+    install.python_packages(make_ctx(tmp_path))
+    (argv,) = [a for a in rec.argvs() if is_pip(a)]
+    assert argv[0] == str(exe)
+    assert argv[4:] == ["-r", "requirements.txt", "-r", "requirements-piper.txt",
+                        "-r", "requirements-stt.txt"]
+
+
+def test_unchanged_requirements_are_not_reinstalled(tmp_path, rec):
+    fake_venv(tmp_path)
+    fake_requirements(tmp_path)
+    install.python_packages(make_ctx(tmp_path))
+    status = install.python_packages(make_ctx(tmp_path))
+    assert sum(is_pip(a) for a in rec.argvs()) == 1
+    assert status.startswith("skipped")
+
+
+def test_a_changed_requirements_file_reinstalls(tmp_path, rec):
+    fake_venv(tmp_path)
+    fake_requirements(tmp_path)
+    install.python_packages(make_ctx(tmp_path))
+    (tmp_path / "requirements-stt.txt").write_text("faster-whisper==9\n")
+    install.python_packages(make_ctx(tmp_path))
+    assert sum(is_pip(a) for a in rec.argvs()) == 2
+
+
+def test_the_stamp_lives_inside_the_venv_so_deleting_it_forgets_it(tmp_path, rec):
+    fake_venv(tmp_path)
+    fake_requirements(tmp_path)
+    install.python_packages(make_ctx(tmp_path))
+    assert (tmp_path / ".venv" / install.STAMP).is_file()
+
+
+def test_a_failed_pip_stops_and_stamps_nothing(tmp_path, rec):
+    fake_venv(tmp_path)
+    fake_requirements(tmp_path)
+    rec.reply(is_pip, install.Result(1, "", "No matching distribution"))
+    with pytest.raises(install.StepFailed):
+        install.python_packages(make_ctx(tmp_path))
+    assert not (tmp_path / ".venv" / install.STAMP).exists()
+
+
+# --- Playwright --------------------------------------------------------------
+
+def test_playwright_installs_chromium_through_the_venv(tmp_path, rec):
+    exe = fake_venv(tmp_path)
+    install.playwright(make_ctx(tmp_path))
+    assert rec.argvs() == [[str(exe), "-m", "playwright", "install", "chromium"]]

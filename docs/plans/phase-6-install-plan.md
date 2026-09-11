@@ -701,7 +701,12 @@ git commit -m "install.py: the spine, and prerequisites checked never installed"
 
 ---
 
-### Task 4: The venv, the Python packages, Playwright
+### Task 4: The venv, the Python packages, Playwright — **DONE 2026-09-11**
+
+> Run for real against the working checkout: venv skipped (3.13) in 0.0s;
+> packages 1.6s the first time (pip: all satisfied; then stamped), 0.0s
+> the second; Playwright 0.3s with Chromium already present — the
+> always-run step costs nothing when there is nothing to do.
 
 **Files:**
 - Modify: `install.py` (append)

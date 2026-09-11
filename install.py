@@ -133,3 +133,81 @@ def prerequisites(ctx: Context) -> str:
         else:
             lines.append(f"note: no `{name}` on PATH -- {_install_hint(name)}")
     return "\n".join(lines)
+
+
+REQUIREMENTS = ("requirements.txt", "requirements-piper.txt", "requirements-stt.txt")
+
+
+def venv_python(root: Path) -> Path | None:
+    """The venv's interpreter under EITHER platform's name -- both tried,
+    never chosen by platform (electron/python.js follows the same rule)."""
+    for rel in (Path(".venv", "Scripts", "python.exe"), Path(".venv", "bin", "python")):
+        candidate = root / rel
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def _digest(files: list[Path]) -> str:
+    h = hashlib.sha256()
+    for f in files:
+        h.update(f.name.encode("utf-8") + b"\0" + f.read_bytes() + b"\0")
+    return h.hexdigest()
+
+
+def _is_current(target: Path, digest: str) -> bool:
+    """Whether `target` was last built from inputs with this digest. The stamp
+    lives INSIDE the thing it describes: delete the venv, or node_modules, and
+    the stamp goes with it rather than vouching for something that is gone."""
+    try:
+        return (target / STAMP).read_text(encoding="utf-8").strip() == digest
+    except OSError:
+        return False
+
+
+def _stamp(target: Path, digest: str) -> None:
+    target.mkdir(parents=True, exist_ok=True)
+    (target / STAMP).write_text(digest + "\n", encoding="utf-8")
+
+
+def venv(ctx: Context) -> str:
+    found = venv_python(ctx.root)
+    if found is None:
+        argv = [ctx.python, "-m", "venv", str(ctx.root / ".venv")]
+        must(run(argv, cwd=ctx.root), argv, "could not create .venv")
+        found = venv_python(ctx.root)
+        if found is None:
+            raise StepFailed("created .venv, but found no interpreter inside it")
+        return f"created .venv ({found})"
+    argv = [str(found), "-c", "import sys; print('%d.%d' % sys.version_info[:2])"]
+    said = must(run(argv), argv, "the existing .venv's Python would not run").stdout.strip()
+    got = _version(said)
+    if got is None or got[:2] < MIN_PYTHON:
+        raise StepFailed(f"the existing .venv is Python {said or 'unknown'}; JARVIS needs "
+                         f"3.11 or newer. Delete .venv and run install.py again.")
+    return f"skipped: .venv already exists (Python {said})"
+
+
+def python_packages(ctx: Context) -> str:
+    """All three requirements files: the voice and the ear are optional for a
+    Chrome JARVIS, but the desktop application is what this sets up."""
+    exe = venv_python(ctx.root)
+    digest = _digest([ctx.root / name for name in REQUIREMENTS])
+    target = ctx.root / ".venv"
+    if _is_current(target, digest):
+        return "skipped: requirements unchanged since the last install"
+    argv = [str(exe), "-m", "pip", "install"]
+    for name in REQUIREMENTS:
+        argv += ["-r", name]
+    must(run(argv, cwd=ctx.root), argv, "pip could not install the requirements")
+    _stamp(target, digest)
+    return "installed " + ", ".join(REQUIREMENTS)
+
+
+def playwright(ctx: Context) -> str:
+    """Always run: Playwright's own installer skips a browser it already has,
+    which beats guessing where it keeps them (PLAYWRIGHT_BROWSERS_PATH moves
+    them). The fresh-clone run in Task 12 times it."""
+    argv = [str(venv_python(ctx.root)), "-m", "playwright", "install", "chromium"]
+    must(run(argv, cwd=ctx.root), argv, "Playwright could not install Chromium")
+    return "Chromium ready"
