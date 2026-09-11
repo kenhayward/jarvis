@@ -177,6 +177,109 @@ minutes of actually running it produced four defects, two of which no test
 could reach. The same standard applies here: this phase is not done until
 somebody has launched it, talked to it, closed it to the tray, and quit it.
 
+## Task 1: does audio survive a hidden window? — MEASURED 2026-09-11
+
+The spec's own risk list named this the most likely thing to be wrong and the
+cheapest to test. It was wrong, and finding out how took five runs, one of
+which reached the wrong conclusion and one of which corrected it. All five are
+kept, because the mistake in the middle is the most useful part.
+
+### The answer
+
+**A hidden Electron window loses about a third of its captured audio, and
+`webPreferences: { backgroundThrottling: false }` removes the sustained loss.**
+Every run is ten minutes on the Windows box, 16 kHz capture, measured by the
+audio thread's own running sample count against wall-clock time:
+
+| run | window | captured | silent seconds |
+|---|---|---|---|
+| control | **visible** | **9,728,000 / 9,728,000 — 100.0%** | 0 |
+| control | **hidden** (default throttling) | **6,528,000 / 9,728,000 — 67.1%** | 200 |
+| fix | **hidden**, `backgroundThrottling: false` | **9,312,000 / 9,728,000 — 95.7%** | 26 |
+
+The visible and hidden controls are the same probe, the same session, nothing
+else holding the microphone — the only variable is the window being hidden,
+and it costs exactly a third. The loss is not delayed audio that arrives
+later: there is no catch-up, and in every run `captured` equalled `received`
+to the sample, so the transport from the audio thread to the page is lossless.
+What is lost is never captured at all.
+
+**The throttling starts within about thirty seconds of hiding, not at
+Chromium's five-minute mark.** That is why the first, 12-second test looked
+clean: it ended before the throttling began. A short test of a long-running
+condition cannot see the failure that matters.
+
+**It affects `AudioWorklet` as well as `ScriptProcessorNode`.** Moving capture
+off the main thread does not help; the whole renderer's audio is throttled.
+So this is not a reason to move `capture.ts` to AudioWorklet — that is still
+worth doing because ScriptProcessor is deprecated, but it is a separate change
+and it does not fix this.
+
+**How the fix works, verified rather than assumed.** With
+`backgroundThrottling: false` the renderer is never told it is in the
+background: `document.hidden` stays `false` throughout, and that is the
+mechanism, not a sign the window failed to hide. The window's absence from
+the desktop was checked independently — `win.hide()` was logged by the main
+process, and the spike's window was absent from the visible top-level windows
+enumerated by `jarvis_platform.windows.screen.windows()`. A result that says
+"not hidden" is exactly the kind that has to be checked from outside.
+
+### What is NOT established
+
+The fixed run was not perfect. Minutes 0-6 and 9-10 held exactly 16,000
+samples a second; **minutes 7 and 8 dipped to 13,559 and 11,661 and then
+recovered**, giving the 26 silent seconds.
+
+Its cause is unknown. It has the same fall-then-recover shape as run 3 below,
+which was confounded by another process holding the microphone, and the
+visible control had no dip at all — but one run cannot separate a transient on
+the machine from something about a hidden, unthrottled window. The sustained
+loss is gone; a short, recovering one is unexplained.
+
+**If a tray-resident JARVIS ever drops words, measure this first** — and with
+a visible control over the same ten minutes, because that is the only thing
+that made any of these numbers interpretable.
+
+### The five runs, including the wrong turn
+
+1. **12 seconds hidden, Ken talking.** Frames steady at ~4/s, peak tracking
+   his voice, and his own pause at 55-69s dropped the peak to the room floor —
+   an unplanned control proving the peak followed speech. Looked clean. **Too
+   short to see anything:** the throttling starts after about thirty seconds.
+
+2. **Ten minutes hidden, ScriptProcessorNode.** Full rate for four minutes,
+   then 2.53 callbacks/s — 65% — for the rest. Attributed at the time to
+   main-thread throttling, since ScriptProcessor runs on the main thread.
+
+3. **Ten minutes hidden, AudioWorklet.** Slowed to ~64% at 33s, and then
+   **recovered to full at 366s while still hidden.** Hidden-page throttling
+   does not lift while the page stays hidden, so this did not fit. The
+   explanation offered for run 2 was **withdrawn** — reasonably, since the
+   data contradicted it — and the proper control was proposed instead.
+
+4. **The controls: visible, then hidden, back to back**, with the JARVIS
+   server and Vite stopped and its browser tab closed so nothing else was
+   capturing the microphone. Visible 100.0%, hidden 67.1%, **and the hidden
+   run did not recover.** So hiding WAS the cause, the withdrawal in step 3 was
+   the wrong call, and run 3's recovery was the confound: the JARVIS page,
+   still open in Chrome with the local STT backend, had been holding the same
+   USB microphone.
+
+5. **Hidden, `backgroundThrottling: false`.** 95.7%.
+
+The lesson is the one phase 4 already paid for, arriving from the other
+direction: **a result you cannot explain is a reason to add a control, not to
+pick a story.** Run 2 picked a story that happened to be right. Run 3 found a
+fact that contradicted it and withdrew it, which was the right instinct and
+the wrong conclusion — only a control that removed the competing consumer
+could tell those apart. Neither the first explanation nor its withdrawal was
+worth anything until step 4 existed.
+
+A second lesson, smaller: **remove competing consumers before measuring.** The
+live JARVIS session left running from earlier testing was capturing the same
+microphone the spike measured, and it produced a result that looked like
+evidence against the true cause.
+
 ## What would make this design wrong
 
 Stated so it is falsifiable — and with the caveat phase 4 earned: **this list
@@ -189,11 +292,10 @@ phase 4 was on nobody's list.** Run the cheap experiment anyway.
 * **Attaching to a running server proves unsafe** — for instance if the shell
   cannot reliably tell a JARVIS from something else on the port. Then refusing
   is the honest fallback, and the developer workflow gets worse.
-* **Tray residency turns out to need a running window** for audio to keep
-  working. Chromium throttles hidden windows aggressively, and if capture
-  stops when the window is hidden, "closing hides and JARVIS keeps listening"
-  is a promise the platform will not keep. **This is the most likely of the
-  three and the cheapest to test — do it first.**
+* ~~**Tray residency turns out to need a running window.**~~ **It did — and
+  it is fixed by one line. Measured 2026-09-11, see "Task 1: does audio
+  survive a hidden window?" below.** A hidden Electron window loses a third of
+  its audio unless `webPreferences.backgroundThrottling` is `false`.
 
 ## Rules carried forward
 

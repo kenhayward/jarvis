@@ -52,7 +52,14 @@ server's own page — there is no bundled copy of the frontend.
 
 ---
 
-### Task 1: Does audio survive a hidden window?
+### Task 1: Does audio survive a hidden window? — **DONE 2026-09-11**
+
+> **Answered: no, not by default.** A hidden window loses a third of its
+> audio; `webPreferences.backgroundThrottling: false` removes the
+> sustained loss (67.1% -> 95.7%). Full record, including a wrong turn,
+> in `phase-5-electron.md`. **Task 5 below has been corrected to carry
+> the fix** — without it the tray would silently lose a third of
+> everything said to it.
 
 **This task comes first because it can invalidate the design.** The spec names
 it as the most likely thing to be wrong and the cheapest to test: Chromium
@@ -174,7 +181,7 @@ git commit -m "Phase 5 spike: whether audio survives a hidden window"
 
 ---
 
-### Task 2: Finding the Python interpreter
+### Task 2: Finding the Python interpreter — **DONE 2026-09-11** (`1a57c33`)
 
 **Files:**
 - Create: `electron/package.json`
@@ -735,6 +742,13 @@ function createWindow() {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,
       nodeIntegration: false,
+      // REQUIRED for tray residency. Measured in Task 1: a hidden window with
+      // the default (true) captured 67.1% of its audio over ten minutes, the
+      // same window visible captured 100.0%, and with this set to false it
+      // captured 95.7%. Throttling starts within ~30s of hiding. Without this
+      // line, closing JARVIS to the tray loses a third of what is said to it,
+      // and it transcribes as garbage rather than failing cleanly.
+      backgroundThrottling: false,
     },
   });
   win.loadURL(ORIGIN);
