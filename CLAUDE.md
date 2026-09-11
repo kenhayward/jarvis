@@ -18,6 +18,17 @@ facts (mic-in-Chrome-only, the per-port permission trap, subscription vs. API
 key, what an expired login sounds like, Accessibility) that were only learned
 by hitting them live, and this walkthrough assumes them.
 
+**On your own machine, one command does all of this:** `py install.py`
+(Windows) or `python3 install.py` (macOS, UNVERIFIED), from the checkout —
+and again after every `git pull`. It checks Python 3.11+, Node 22.12+ and
+npm (it installs none of them), builds everything below, fetches the voice
+and the whisper model, creates `.env` if there is none (it never edits one;
+it says what is wrong with it), adds a Start-menu entry on Windows, and ends
+with preflight. Measured on the Windows box: a fresh clone in 43s with warm
+caches, an up-to-date checkout in 3s. The steps below are what it does, for
+reference — and what to do by hand for the Chrome/Vite dev workflow, which
+it does not set up (no certs).
+
 When a user clones this repo and starts Claude Code, help them:
 1. Copy .env.example to .env
 2. Install Claude Code (`npm install -g @anthropic-ai/claude-code`, 2.1.224 or
@@ -148,12 +159,13 @@ the commit why the alternative was worse.
 - `frontend/src/dashboard/` — The `/dashboard` run monitor (vanilla TS)
 - `electron/` — The desktop application: a tray-resident Electron shell that
   starts and supervises `server.py` and loads the page the server itself
-  serves, over plain `http://127.0.0.1:8340` — no Vite, so no certs. Run it
-  with `cd electron && npm install && node node_modules/electron/install.js
-  && npm start` (`npm install` alone does not unpack the Electron binary).
+  serves, over plain `http://127.0.0.1:8340` — no Vite, so no certs.
+  `install.py` sets it up and adds the Start-menu entry; by hand it is
+  `cd electron && npm ci && node node_modules/electron/install.js && npm
+  start` (`npm ci` alone does not unpack the Electron binary).
   `main.js` is the only file that touches Electron; the logic beside it has
   no Electron import and is tested with `npm test` in that directory, which
-  **CI does not run** — run it after touching anything there.
+  CI runs on both platforms (without downloading the binary).
   `server.js` attaches to a JARVIS already on the port (never a second
   server: two brains, two SQLite writers), refuses a port held by anything
   else, and otherwise spawns the venv's `server.py --no-ssl` — without the
@@ -168,8 +180,18 @@ the commit why the alternative was worse.
   Closing the window HIDES it and JARVIS keeps listening; the tray's Quit
   exits. That only works because the window sets
   `backgroundThrottling: false` — measured, a hidden window without it
-  captures two thirds of its audio. `docs/plans/phase-5-electron.md` has
-  the measurements, and what is still unverified on macOS
+  captures two thirds of its audio. The tray's **Start with Windows**
+  (off by default, Windows-only; `login.js`) writes a Run entry named
+  `JARVIS` — Electron's default name is shared by every unpackaged
+  Electron app — and the checkbox reads Windows' named list, because
+  `getLoginItemSettings().openAtLogin` is true for ANY entry with the same
+  command. Started at login it runs with no window at all (measured: a
+  never-shown window captures 99.9%). The tray's **Dashboard** opens
+  `/dashboard` in a window of its own, so the voice window is never
+  navigated away and never stops listening. `app.setAppUserModelId`
+  makes Windows name notices "JARVIS" rather than "Electron".
+  `docs/plans/phase-5-electron.md` and `phase-6-install.md` have the
+  measurements, and what is still unverified on macOS
 - `run_store.py` — SQLite `runs` / `run_events` tables, six-value status enum
 - `run_executor.py` — Spawns `claude -p --output-format stream-json` and drives
   each run to a terminal state, streaming its events into the store
@@ -275,6 +297,21 @@ the commit why the alternative was worse.
   (`~/.claude`, `~/.claude-orcha`, plus `JARVIS_CLAUDE_CONFIG_DIRS`) through
   `session_watch.config_roots`
 - `data_paths.py` — Single source of truth for where data is written
+- `install.py` — Sets up a checkout, or updates one after `git pull`: ten
+  steps from prerequisites to preflight, each checking before it acts and
+  stamping what it built (inside `.venv` / `node_modules`, so deleting one
+  forgets it), the first failure stopping the run. **Standard library
+  only** — it runs before the venv exists; a test refuses any other import.
+  Every program goes through its one `run()` seam, by the full path
+  `which()` found (on Windows `npm` is `npm.cmd`). It never edits an
+  existing `.env`, asks JARVIS's own code (through the venv) which models
+  are present, and passes paths to PowerShell only as environment
+  variables. Nothing imports it. `docs/plans/phase-6-install.md`
+- `env_file.py` — The one definition of what a line of `.env` is, moved out
+  of `server.py` so `install.py` can read `.env` exactly as the server does
+  without the venv. `server._parse_env_lines` IS this function (a test pins
+  it): three copies once disagreed, and the gap let a POSTed value redirect
+  the binary the brain is spawned from
 
 ## Other directories
 - `docs/plans/` — the cross-platform port: the phased plan, and the live

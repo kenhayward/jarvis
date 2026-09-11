@@ -2,13 +2,18 @@
 const { app, BrowserWindow, Menu, Tray, dialog, session, shell, systemPreferences } = require("electron");
 const path = require("node:path");
 const { createSupervisor } = require("./server");
-const { sameOrigin, grantsPermission } = require("./policy");
+const { sameOrigin, grantsPermission, dashboardUrl } = require("./policy");
 const { sttWarning } = require("./backend");
 const { findPython } = require("./python");
+const {
+  LOGIN_NAME, startAtLoginSupported, loginItem, launchedAtLogin, startsAtLogin,
+} = require("./login");
 
 const ORIGIN = process.env.JARVIS_ORIGIN || "http://127.0.0.1:8340";
 const REPO_ROOT = path.resolve(__dirname, "..");
 const log = (m) => console.log(`[jarvis] ${m}`);
+// Started by Windows at login: the tray, not a window. See login.js.
+const STARTED_AT_LOGIN = launchedAtLogin(process.argv);
 
 // HTTP and not HTTPS, deliberately. The certificates exist for one reason --
 // frontend/vite.config.ts hard-codes an HTTPS proxy target -- and there is no
@@ -24,7 +29,14 @@ const log = (m) => console.log(`[jarvis] ${m}`);
 if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
+  // Windows names the source of every notification -- the tray's balloons
+  // are shown as toasts -- by the process's AppUserModelID. An unpackaged
+  // Electron app's default is Electron's own, so Ken's first live run saw
+  // "Electron" on JARVIS's notices. Windows-only API; the same name the
+  // login entry uses (login.js), for the same reason.
+  if (process.platform === "win32") app.setAppUserModelId(LOGIN_NAME);
   let win = null;
+  let dashboard = null;   // the run monitor's own window, when it is open
   let tray = null;        // held here so it is never garbage-collected away
   // The one flag that separates "the user closed the window" from "the
   // application is quitting". It is set in before-quit, which every quit
@@ -45,17 +57,51 @@ if (!app.requestSingleInstanceLock()) {
 
   app.on("second-instance", showWindow);
 
-  function createTray() {
-    tray = new Tray(path.join(__dirname, "tray-icon.png"));
-    tray.setToolTip("JARVIS (listening)");
-    tray.setContextMenu(Menu.buildFromTemplate([
+  // The login entry, as Windows is asked for it AND as it is read back:
+  // getLoginItemSettings on Windows only answers for the same path and args.
+  function ourLoginItem() {
+    return loginItem(process.execPath, app.getAppPath());
+  }
+
+  function trayMenu() {
+    const items = [
       { label: "Show JARVIS", click: showWindow },
+      { label: "Dashboard", click: openDashboard },
+    ];
+    if (startAtLoginSupported(process.platform)) {
+      items.push({
+        label: "Start with Windows",
+        type: "checkbox",
+        // What Windows reports, not what this process last wrote -- read
+        // by name; see startsAtLogin for why openAtLogin will not do.
+        checked: startsAtLogin(app.getLoginItemSettings(ourLoginItem())),
+        click: (item) => {
+          app.setLoginItemSettings({ ...ourLoginItem(), openAtLogin: item.checked });
+          tray.setContextMenu(trayMenu());
+        },
+      });
+    }
+    items.push(
       { type: "separator" },
       // Quit must be findable. An application a person cannot work out how
       // to exit is worse than one that simply closes when you close it.
       { label: "Quit JARVIS", click: () => app.quit() },
-    ]));
+    );
+    return Menu.buildFromTemplate(items);
+  }
+
+  function createTray() {
+    tray = new Tray(path.join(__dirname, "tray-icon.png"));
+    tray.setToolTip("JARVIS (listening)");
+    tray.setContextMenu(trayMenu());
     tray.on("double-click", showWindow);
+    if (STARTED_AT_LOGIN && process.platform === "win32") {
+      tray.displayBalloon({
+        title: "JARVIS started with Windows",
+        content: "It is listening. Open it from the tray icon.",
+        noSound: true,
+      });
+    }
   }
 
   // The first time the window is closed, say where JARVIS went. Closing
@@ -118,12 +164,65 @@ if (!app.requestSingleInstanceLock()) {
     }
   }
 
+  // Both windows show JARVIS and nothing else: off-origin navigation and every
+  // window.open go to the user's own browser instead (openOutside).
+  function lockToOrigin(w) {
+    w.webContents.on("will-navigate", (event, url) => {
+      if (sameOrigin(url, ORIGIN)) return;
+      event.preventDefault();
+      openOutside(url);
+    });
+    w.webContents.setWindowOpenHandler(({ url }) => {
+      openOutside(url);
+      return { action: "deny" };
+    });
+  }
+
+  // The window's OWN icon -- the taskbar takes the shortcut's, but the title
+  // bar would otherwise show Electron's -- and no menu bar: Electron's
+  // default File/Edit/View menu is a developer's, with reload and DevTools
+  // on it. removeMenu is per window on Windows and Linux; macOS keeps its
+  // application menu, which Cmd+Q and copy/paste need there.
+  const ICON = path.join(__dirname, "jarvis.ico");
+
+  // The run monitor, in a window of its own so the voice window is never
+  // navigated away from the orb and never stops listening. Closing it
+  // closes it; the tray opens it again.
+  function openDashboard() {
+    if (dashboard) {
+      if (dashboard.isMinimized()) dashboard.restore();
+      dashboard.show();
+      dashboard.focus();
+      return;
+    }
+    dashboard = new BrowserWindow({
+      width: 1200,
+      height: 850,
+      title: "JARVIS dashboard",
+      icon: ICON,
+      backgroundColor: "#111111",
+      webPreferences: {
+        preload: path.join(__dirname, "preload.js"),
+        contextIsolation: true,
+        nodeIntegration: false,
+      },
+    });
+    dashboard.removeMenu();
+    lockToOrigin(dashboard);
+    dashboard.on("closed", () => { dashboard = null; });
+    dashboard.loadURL(dashboardUrl(ORIGIN));
+  }
+
   function createWindow() {
     win = new BrowserWindow({
       width: 1100,
       height: 800,
       title: "JARVIS",
+      icon: ICON,
       backgroundColor: "#111111",
+      // At login, the tray and not a window -- still listening: phase 6's
+      // Task 1 measured a never-shown window capturing 99.9%, no gesture.
+      show: !STARTED_AT_LOGIN,
       webPreferences: {
         preload: path.join(__dirname, "preload.js"),
         contextIsolation: true,
@@ -137,15 +236,8 @@ if (!app.requestSingleInstanceLock()) {
         backgroundThrottling: false,
       },
     });
-    win.webContents.on("will-navigate", (event, url) => {
-      if (sameOrigin(url, ORIGIN)) return;
-      event.preventDefault();
-      openOutside(url);
-    });
-    win.webContents.setWindowOpenHandler(({ url }) => {
-      openOutside(url);
-      return { action: "deny" };
-    });
+    win.removeMenu();
+    lockToOrigin(win);
     // Closing HIDES. The server keeps running and JARVIS keeps listening --
     // the whole point of tray residency, and only sound because Task 1
     // measured audio surviving a hidden window (with backgroundThrottling
@@ -195,7 +287,9 @@ if (!app.requestSingleInstanceLock()) {
                                  findPython(REPO_ROOT) || "python");
       if (!warning) return;
       log(`speech recognition: ${warning.split("\n")[0]}`);
-      dialog.showMessageBox(win, { type: "warning", title: "JARVIS cannot hear", message: warning });
+      // Not hung off a window nobody can see: at login there is none showing.
+      dialog.showMessageBox(win && win.isVisible() ? win : undefined,
+                            { type: "warning", title: "JARVIS cannot hear", message: warning });
     } catch (e) {
       log(`could not read settings status: ${e.message}`);
     }

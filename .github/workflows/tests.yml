@@ -53,7 +53,9 @@ jobs:
         with:
           node-version: "22"
           cache: npm
-          cache-dependency-path: frontend/package-lock.json
+          cache-dependency-path: |
+            frontend/package-lock.json
+            electron/package-lock.json
 
       - name: Python dependencies
         run: pip install -r requirements.txt
@@ -72,6 +74,18 @@ jobs:
       - name: Frontend build
         run: npm run build
         working-directory: frontend
+
+      # electron/'s tests import no Electron -- the logic beside main.js is
+      # plain Node -- so the 100 MB binary is not downloaded for them.
+      - name: Electron dependencies
+        run: npm ci
+        working-directory: electron
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+
+      - name: Electron tests
+        run: npm test
+        working-directory: electron
 
       - name: Test suite
         env:

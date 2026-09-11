@@ -24,27 +24,10 @@ import threading
 import time
 from pathlib import Path
 
-# The ONE definition of what a line of `.env` is. Both readers use it (this
-# boot loader and `_read_env`), and so does `_env_value_problem`, which is
-# what the writer asks before it puts a value on a line.
-#
-# One function rather than three copies because the copies disagreed. The
-# writer forbade three characters — "\n", "\r", "\0" — and `str.splitlines()`
-# splits on ten, so `{"user_name": "Tony\x0bJARVIS_CLAUDE_PATH=/tmp/evil"}`
-# came back 200 and `_read_env()` then reported JARVIS_CLAUDE_PATH=/tmp/evil.
-# That is the binary the brain is spawned from, and /api/restart is one call
-# away. Extending the blocklist to ten characters would have left the same
-# shape of bug for the next separator; deriving the writer's rule from the
-# reader's parser cannot.
-def _parse_env_lines(text: str) -> list[tuple[str, str]]:
-    """Every (key, value) a reader of `.env` sees in `text`, in order."""
-    out: list[tuple[str, str]] = []
-    for line in text.splitlines():
-        line = line.strip()
-        if line and not line.startswith("#") and "=" in line:
-            k, _, v = line.partition("=")
-            out.append((k.strip(), v.strip().strip('"').strip("'")))
-    return out
+# The ONE definition of what a line of `.env` is lives in env_file.py -- see
+# its docstring for why there is exactly one. Imported under the old name so
+# every reader in this file, and every test, is unchanged.
+from env_file import parse_env_lines as _parse_env_lines
 
 
 # Load .env file if present.

@@ -609,6 +609,13 @@ EXEMPT = {
         "sentence is `_describe_run`\'s and the task heading is "
         "`_build_progress_clause`\'s — all three driven. `project_name` "
         "appears once, in a `==` comparison"),
+    "install.checks": (
+        "its `status` is a preflight.Check's -- ok, warn or fail, JARVIS's "
+        "own verdict on this machine -- not a run row's, read out of JSON "
+        "that preflight itself printed. And what it builds goes to the "
+        "terminal of the person running install.py, never to the brain: "
+        "install.py is not imported by the server and nothing it returns "
+        "reaches a header, a prompt or a spoken line"),
 }
 
 
