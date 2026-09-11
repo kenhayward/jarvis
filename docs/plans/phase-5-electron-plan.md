@@ -722,7 +722,7 @@ git commit -m "electron: attach, spawn, and kill only what we started"
 
 ---
 
-### Task 5: The window, and the permission handler — **DONE 2026-09-11, two hand checks pending**
+### Task 5: The window, and the permission handler — **DONE 2026-09-11, one hand check pending**
 
 > **Built with three additions the code below does not carry** — the committed
 > `electron/main.js` and `electron/policy.js` are the truth:
@@ -753,9 +753,14 @@ git commit -m "electron: attach, spawn, and kill only what we started"
 > started on the Yeti Nano, and the brain came up. Closing the window quit
 > the app and left nothing: port free, no server processes.
 >
-> **Pending (Ken on a call, no audio):** Step 4's attach branch — a server
-> started by hand must still be running after the app quits — and a real
-> conversation through the window. The first run logged `mic: DEAF ... the
+> **Attach branch verified** (during Task 6, 2026-09-11): the app attached to
+> a stand-in JARVIS on 8341, Ken quit it from the tray, the app left no
+> process behind, and the stand-in still answered `/api/health`. With Task
+> 4's end-to-end run (a real server attached, still up after `stop()`),
+> that is Step 4.
+>
+> **Pending (Ken on a call, no audio):** a real conversation through the
+> window. The first run logged `mic: DEAF ... the
 > recogniser has returned nothing for 3s` two seconds after capture began;
 > with whisper the page sends speech only after a pause, so it may be a
 > false alarm. Unexamined.
@@ -906,7 +911,7 @@ git commit -m "electron: a window, a supervised server, and a microphone"
 
 ---
 
-### Task 6: The tray, and what quit means — **DONE 2026-09-11, tray menu check pending**
+### Task 6: The tray, and what quit means — **DONE 2026-09-11, Step 4.3 pending**
 
 > **Built with two changes to the code below** — the committed `main.js` is
 > the truth:
@@ -933,10 +938,11 @@ git commit -m "electron: a window, a supervised server, and a microphone"
 > running; a second `npm start` exited within a second without supervising
 > anything and brought the window back to the front.
 >
-> **Pending:** the tray menu itself (Show, Quit) and the balloon, which
-> need a person's click and eyes; Quit against the stand-in is also the
-> attach case — the stand-in must still answer afterwards. And Step 4.3,
-> speaking to a hidden JARVIS, waits for audio.
+> **By hand, Ken, same stand-in:** the window's X hid it and the balloon
+> appeared; Quit JARVIS from the tray exited the app — no Electron process
+> left — and the stand-in, which the app attached to rather than started,
+> still answered. **Pending:** Step 4.3, speaking to a hidden JARVIS, waits
+> for audio.
 
 **Files:**
 - Modify: `electron/main.js`
