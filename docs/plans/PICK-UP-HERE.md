@@ -4,9 +4,12 @@ Paste the block below into a fresh Claude Code session in this repository.
 Everything in it is checkable against the repo — if a claim here disagrees
 with the code, trust the code and fix this file.
 
-Last updated 2026-09-09, at the end of the Windows session that closed the
-last two phase 3 items — `claude.cmd` and the terminal launcher. Both were
-"verify a guess" tasks, and both guesses were wrong in the same direction.
+Last updated 2026-09-11, at the end of the Windows session that built phase 5
+— the Electron application — and merged it (PR #41). Before that, 2026-09-09,
+the session that closed phase 3's last two items, `claude.cmd` and the
+terminal launcher: both "verify a guess" tasks, both guesses wrong in the same
+direction. Phase 5 went the same way — nearly every task's plan was wrong
+somewhere, and each time measuring found it before building on it.
 
 ---
 
@@ -56,33 +59,62 @@ PHASE 4 IS DONE (2026-09-10) — JARVIS hears you with no Chrome involved,
 through faster-whisper base.en, and speaks through piper. Read
 docs/plans/phase-4-speech.md if you touch the voice path.
 
-The next work is phase 5, the Electron application:
-docs/plans/phase-5-electron.md (spec) and phase-5-electron-plan.md (8 tasks).
-It DEPARTS FROM THE PLAN IN TWO WAYS and
-says so at the top — built Windows-first rather than macOS-first, and it is
-an application (tray-resident, supervising its own server) rather than the
-"shell" the phase table called it.
+PHASE 5 IS DONE ON WINDOWS (2026-09-11, PR #41) — JARVIS is a desktop
+application: electron/ is a tray-resident Electron shell that starts and
+supervises server.py and loads the page the server serves over plain
+http://127.0.0.1:8340. Run it with `cd electron && npm install && node
+node_modules/electron/install.js && npm start`. Ken ran it by hand and
+talked to it; it worked. The spec is docs/plans/phase-5-electron.md —
+read "What running it found" — and phase-5-electron-plan.md records, task
+by task, where the plan was wrong and what measuring found instead.
+CLAUDE.md's Key Files entry for electron/ carries the reasons behind the
+parts most likely to be "simplified" by someone who was not there.
 
-PHASE 5 PROGRESS (2026-09-11): Tasks 1 and 2 DONE. Task 3 (health.js — tell
-a JARVIS from anything else on the port) is next.
+The findings that change how you would build anything near it:
+- A HIDDEN Electron window loses a third of its captured audio (visible
+  100.0%, hidden 67.1%, over ten minutes) unless
+  webPreferences.backgroundThrottling is false (95.7%). Throttling starts
+  ~30s after hiding — a short test cannot see it — and hits AudioWorklet
+  too. A two-minute transient dip in the fixed run is UNEXPLAINED; if a
+  tray JARVIS ever drops words, re-measure that first, with a visible
+  control.
+- server.py switches ITSELF to HTTPS whenever cert.pem/key.pem are beside
+  it, and every dev box has them. The app spawns `server.py --no-ssl` — the
+  one change phase 5 made to server.py.
+- A JARVIS on HTTPS fails an http:// probe with UND_ERR_SOCKET, not
+  ECONNREFUSED. Only a refused connection means "nothing is there";
+  anything else means something holds the port, and the app refuses rather
+  than start a second server over it.
+- On Windows, killing the venv's python.exe (a redirector whose child is
+  the real interpreter) takes the whole tree — interpreter, brain, the
+  brain's MCP child — and so does the parent simply exiting. Measured; the
+  macOS equivalent is not.
 
-Task 1's answer changes Task 5 and is already written into the plan: a
-HIDDEN Electron window loses a third of its captured audio (visible 100.0%,
-hidden 67.1%, over ten minutes) unless webPreferences.backgroundThrottling is
-false (95.7%). Throttling starts within ~30s of hiding — a short test cannot
-see it. It hits AudioWorklet too, so moving capture off the main thread does
-not fix it. A two-minute transient dip in the fixed run is UNEXPLAINED; if a
-tray JARVIS ever drops words, re-measure that first, with a visible control.
-The full five-run record, including a wrong turn, is in the spec.
+What is NOT verified: every macOS part of it (the TCC prompt, kill
+behaviour, the tray; the first-hide notice is Windows-only), and barge-in
+and hidden-window speech rest on Ken's "it worked" rather than a recorded
+measurement. See "If you are on the Mac" below.
 
-Also now due: phase 3's continue-on-error deferral. It was "after phase 4",
-and phase 4 is done. It is blocked on issue #36 — three test_speech.py
-flakes in one day, two of them in the same test.
+OPEN: PR #42 — the live run exposed that brain.py rotated its context after
+ONE question. A stream-json `result` event reports usage SUMMED over the
+turn's model calls, and the brain sized its window from it, so a turn with
+tools counted the window once per call. Measured, fixed, tested there; not
+merged as of this writing. Once it is, rotation comes at 120k of ACTUAL
+conversation — much later than before — and JARVIS_BRAIN_CONTEXT_BUDGET is
+the lever if that is too far.
 
-Read "How the boundary moved three times in one day" before anything else
-in that document. The audio boundary went segments -> streaming -> segments
-in a single day, and the round trip is the most useful thing in the repo
-right now.
+Next in the phase table: phase 6, Windows packaging and release.
+
+Also due: phase 3's continue-on-error deferral. It was "after phase 4", and
+phase 4 is done. It is blocked on issue #36 — the Windows speech-chain
+flakes. test_low_items_are_batched_into_one_utterance has now flaked three
+times (the latest on PR #41, where the other Windows run of the same commit
+passed).
+
+If you touch the voice path, read "How the boundary moved three times in one
+day" in docs/plans/phase-4-speech.md before anything else in it. The audio
+boundary went segments -> streaming -> segments in a single day, and the
+round trip is the most useful thing in the repo right now.
 
 The short version: 4b measured barge-in with a raw microphone tap
 (sounddevice) and found every engine transcribing JARVIS instead of the
@@ -131,10 +163,17 @@ here:
   one as a prefix. And the launcher's fallback test asserted that a
   composed shell line was built correctly — it was, and it had never
   worked. Pin the RULE, not the string: "no argv element contains a
-  newline", "no argv element contains a quote".
+  newline", "no argv element contains a quote". Phase 5 added two more:
+  the supervisor's tests passed with a carriage return in the middle of
+  their Windows paths (a shell collapsed "C:\\repo" to "C:\repo"), because
+  they compared the mangled constant with itself; and the fake `claude`
+  reported every turn as a single model call, so no test could see the
+  brain counting its window four times over. A fake has to behave like what
+  it stands in for — measure the real thing, then make the fake match.
 - Run the full suite (bare `pytest`, no flags) before pushing, and the
   frontend gates (cd frontend && npx tsc --noEmit && npm run build) if you
-  touch frontend/.
+  touch frontend/. If you touch electron/, run `cd electron && npm test` —
+  CI does not run it.
 - PRs go to kenhayward/jarvis: gh pr create --repo kenhayward/jarvis --base main
 ```
 
@@ -157,6 +196,21 @@ and reporting the number. The last figure recorded here for macOS is 2523
 passed / 2 failed, from *before* any of this work — it is stale, and nobody
 has re-run it since.
 
+The second useful thing is **phase 5 on a Mac**, because every macOS line of
+`electron/` was written on the Windows box and is marked UNVERIFIED:
+
+```bash
+cd electron && npm install && node node_modules/electron/install.js && npm start
+```
+
+Worth reporting: whether the microphone works first time or macOS's TCC
+prompt appears (`main.js` calls `askForMediaAccess`; a packaged build will
+also need `NSMicrophoneUsageDescription`, which a dev `npm start` does not
+exercise); whether Quit from the tray takes the brain with it (on Windows the
+whole tree dies; on macOS `kill()` is a SIGTERM to the interpreter, and
+nobody has looked); and whether Cmd+Q quits rather than hiding (the fix for
+that is in, and untested there).
+
 ## Setting up a fresh Windows box
 
 Two corrections to the handoff's setup section, from doing it again on
@@ -173,11 +227,18 @@ Two corrections to the handoff's setup section, from doing it again on
   privilege — turn on Developer Mode. Plus ripgrep for one more. Quote the
   skip count next to the pass count, always; a skipped test is invisible, not
   green.
-- **Two Windows tests are flaky in CI** (a speech-chain race and a screen
-  capture) — same commit passed and failed minutes apart. Do NOT dismiss the
-  screen one as "CI cannot photograph a desktop": that would fail every time,
-  and it does not. They are the concrete blocker on removing
-  continue-on-error.
+- **Three Windows tests are flaky in CI** (two speech-chain races and a
+  screen capture) — same commit passed and failed minutes apart; issue #36
+  keeps the tally. Do NOT dismiss the screen one as "CI cannot photograph a
+  desktop": that would fail every time, and it does not. They are the
+  concrete blocker on removing continue-on-error.
+- **Four `tests/test_specs_api.py` tests fail on a box where other Claude
+  Code projects have specs** — they fail identically on `main`. The specs
+  list reads the machine's real `~/.claude`, and the suite's rails do not
+  isolate it; a real project (`eligibility` on this box) appears in the
+  list. CI's clean runner does not see it. Not fixed as of this writing.
+- **Electron:** `npm install` in `electron/` does not unpack the binary;
+  `node node_modules/electron/install.js` does.
 - The repo now HAS a `.gitattributes` pinning `* text=auto eol=lf`, so the
   CRLF hazard the handoff warns about is closed. Read that file's comment
   before touching it; the template hashes depend on it.
@@ -195,5 +256,15 @@ Two corrections to the handoff's setup section, from doing it again on
 - Do not put a directory back into a cmd.exe command line. It travels as the
   spawn's `cwd` now, on both launcher branches, and that is what makes the
   quoting question go away rather than get answered.
-- Do not remove `continue-on-error` from the Windows CI job — see above, it
-  is deferred on purpose until after phase 4.
+- Do not remove `continue-on-error` from the Windows CI job as a tidy-up —
+  see above: it was deferred on purpose until after phase 4, and removing it
+  now is blocked on issue #36.
+- Do not remove `backgroundThrottling: false` from the Electron window. It
+  is why a JARVIS closed to the tray still hears everything, and nothing
+  fails loudly without it — a third of what is said simply goes missing.
+- Do not drop `--no-ssl` from the supervisor's spawn, or teach `health.js`
+  that any failed fetch means "nothing is there". Each of those alone makes
+  the app start a second server over a running JARVIS, or fail every launch
+  on a dev box.
+- Do not widen `electron/policy.js`'s grant. The window holds the
+  microphone; it grants the JARVIS origin's microphone and nothing else.
