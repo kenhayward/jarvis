@@ -405,3 +405,71 @@ def test_a_download_jarvis_still_cannot_find_is_a_stop(tmp_path, rec):
     rec.reply(is_probe, probe_says(voice_present=False, voices_dir=str(tmp_path / "voices")))
     with pytest.raises(install.StepFailed, match="still cannot find"):
         install.models(make_ctx(tmp_path))
+
+
+# --- frontend and Electron ---------------------------------------------------
+
+def npm_ctx(root):
+    for where in ("frontend", "electron"):
+        (root / where).mkdir(exist_ok=True)
+        (root / where / "package-lock.json").write_text('{"lockfileVersion": 3}')
+    return make_ctx(root, tools={"npm": "/fake/bin/npm.cmd", "node": "/fake/bin/node"})
+
+
+def test_the_frontend_is_installed_by_its_lockfile_then_built(tmp_path, rec):
+    ctx = npm_ctx(tmp_path)
+    install.frontend(ctx)
+    assert rec.argvs() == [["/fake/bin/npm.cmd", "ci"], ["/fake/bin/npm.cmd", "run", "build"]]
+    assert rec.calls[0]["cwd"] == tmp_path / "frontend"
+
+
+def test_an_unchanged_lockfile_skips_the_install_but_never_the_build(tmp_path, rec):
+    """A pull can change frontend/src without touching the lockfile."""
+    ctx = npm_ctx(tmp_path)
+    install.frontend(ctx)
+    rec.calls.clear()
+    install.frontend(ctx)
+    assert rec.argvs() == [["/fake/bin/npm.cmd", "run", "build"]]
+
+
+def test_a_busy_node_modules_says_to_quit_jarvis(tmp_path, rec):
+    """Measured 2026-09-11 with the application running from this checkout:
+    npm ci fails with EPERM (unlink, errno -4048) on a DLL in
+    electron/node_modules/electron/dist -- after deleting what it could."""
+    ctx = npm_ctx(tmp_path)
+    rec.reply(lambda a: a[1:] == ["ci"],
+              install.Result(1, "", "npm error code EPERM\nnpm error syscall unlink"))
+    with pytest.raises(install.StepFailed, match="quit it from the tray"):
+        install.electron(ctx)
+
+
+def fake_electron_binary(root):
+    pkg = root / "electron" / "node_modules" / "electron"
+    (pkg / "dist").mkdir(parents=True, exist_ok=True)
+    (pkg / "path.txt").write_text("electron.exe")
+    (pkg / "dist" / "electron.exe").write_text("")
+
+
+def is_unpack(argv):
+    return argv[0] == "/fake/bin/node" and argv[1].endswith("install.js")
+
+
+def test_electron_is_unpacked_when_its_binary_is_missing(tmp_path, rec):
+    ctx = npm_ctx(tmp_path)
+    rec.reply(is_unpack, ok(), effect=lambda *_: fake_electron_binary(tmp_path))
+    install.electron(ctx)
+    assert any(is_unpack(a) for a in rec.argvs())
+    assert install.electron_exe(tmp_path) == tmp_path / "electron" / "node_modules" / "electron" / "dist" / "electron.exe"
+
+
+def test_an_unpacked_electron_is_not_unpacked_again(tmp_path, rec):
+    ctx = npm_ctx(tmp_path)
+    fake_electron_binary(tmp_path)
+    install.electron(ctx)
+    assert not any(is_unpack(a) for a in rec.argvs())
+
+
+def test_an_unpack_that_leaves_no_binary_is_a_stop(tmp_path, rec):
+    ctx = npm_ctx(tmp_path)
+    with pytest.raises(install.StepFailed, match="no binary"):
+        install.electron(ctx)

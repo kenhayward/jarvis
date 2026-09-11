@@ -1292,7 +1292,19 @@ git commit -m "install.py: fetch the models JARVIS will load, as JARVIS judges t
 
 ---
 
-### Task 7: The frontend and Electron
+### Task 7: The frontend and Electron — **DONE 2026-09-11**
+
+> **Step 1 measured:** with the application running from this checkout
+> (against the silent stand-in), `npm ci` in `electron/` failed with
+> **`EPERM`** (`syscall unlink`, `errno -4048`) on
+> `node_modules/electron/dist/d3dcompiler_47.dll` — after deleting whatever
+> it could, leaving the tree broken until `npm ci` and `install.js` ran again
+> with the app quit. `BUSY_MARKERS` keeps `EBUSY` beside the measured
+> `EPERM`.
+>
+> **Run for real, twice:** frontend 6.9s (`npm ci` + build) then 2.0s (build
+> only); Electron 2.1s (`npm ci` + **unpacked the binary** — `npm ci` really
+> does leave none) then 0.0s. Stamps written inside both `node_modules`.
 
 **Files:**
 - Modify: `install.py` (append)

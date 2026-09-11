@@ -342,3 +342,69 @@ def models(ctx: Context) -> str:
     if missing:
         raise StepFailed("downloaded, but JARVIS still cannot find " + " or ".join(missing))
     return "downloaded " + ", ".join(fetched)
+
+
+# What npm reports when Windows will not let it delete a file that is in use.
+# Measured 2026-09-11 with the application running from this checkout: `npm
+# ci` in electron/ failed with EPERM (syscall unlink, errno -4048) on a DLL in
+# node_modules/electron/dist -- AFTER deleting whatever it could, so the tree
+# is left broken until npm ci runs again with JARVIS quit. EBUSY is the other
+# code Windows gives for the same condition.
+BUSY_MARKERS = ("EBUSY", "EPERM")
+
+
+def _npm_ci(ctx: Context, where: Path) -> bool:
+    """`npm ci` by the lockfile, skipped when the lockfile is what the last
+    successful install used. Returns whether it installed."""
+    digest = _digest([where / "package-lock.json"])
+    modules = where / "node_modules"
+    if _is_current(modules, digest):
+        return False
+    argv = [ctx.tools["npm"], "ci"]
+    result = run(argv, cwd=where)
+    if result.returncode != 0:
+        if any(marker in result.output for marker in BUSY_MARKERS):
+            raise StepFailed(f"npm could not replace {where.name}/node_modules -- something in it "
+                             f"is in use. If JARVIS is running, quit it from the tray and run "
+                             f"install.py again.", [str(a) for a in argv], result.output)
+        raise StepFailed(f"npm ci failed in {where.name}/", [str(a) for a in argv], result.output)
+    _stamp(modules, digest)
+    return True
+
+
+def frontend(ctx: Context) -> str:
+    """The application loads the page the server serves out of frontend/dist.
+    The build always runs: a pull can change the source without the lockfile."""
+    where = ctx.root / "frontend"
+    installed = _npm_ci(ctx, where)
+    argv = [ctx.tools["npm"], "run", "build"]
+    must(run(argv, cwd=where), argv, "the frontend build failed")
+    return ("installed dependencies and " if installed else "dependencies unchanged; ") + "built frontend/dist"
+
+
+def electron_exe(root: Path) -> Path | None:
+    """The unpacked Electron binary, found the way Electron finds it: through
+    the path.txt its installer writes (electron/index.js)."""
+    package = root / "electron" / "node_modules" / "electron"
+    try:
+        relative = (package / "path.txt").read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+    exe = package / "dist" / relative
+    return exe if relative and exe.exists() else None
+
+
+def electron(ctx: Context) -> str:
+    """`npm ci` does not unpack the binary (found in phase 5); install.js does."""
+    where = ctx.root / "electron"
+    installed = _npm_ci(ctx, where)
+    unpacked = False
+    if electron_exe(ctx.root) is None:
+        argv = [ctx.tools["node"], str(Path("node_modules", "electron", "install.js"))]
+        must(run(argv, cwd=where), argv, "could not unpack the Electron binary")
+        if electron_exe(ctx.root) is None:
+            raise StepFailed("Electron's installer ran but left no binary")
+        unpacked = True
+    parts = ["installed dependencies" if installed else "dependencies unchanged",
+             "unpacked the binary" if unpacked else "binary present"]
+    return "; ".join(parts)
