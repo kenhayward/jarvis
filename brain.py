@@ -368,7 +368,8 @@ class _Turn:
         self.first_delta: Optional[float] = None
         self.parts: list[str] = []
         self.tools: list[str] = []
-        self.usage: dict = {}
+        self.usage: dict = {}            # the result event's: every column SUMMED over the turn's model calls
+        self.window_usage: dict = {}     # the LAST model call's own usage: the size of the window
         self.assistant_text: list[str] = []   # text blocks from assistant events (errors arrive here)
         # Set the moment anything JARVIS did not write enters this turn's
         # context, either by a WEB_CONTENT_TOOLS tool_use or by one of his own
@@ -391,20 +392,30 @@ class _Turn:
             self.done.set()
 
     def context_tokens(self) -> int:
-        """How big the window IS: the prompt as sent, which is the uncached
-        part plus the part served from cache.
+        """How big the window IS: the prompt the LAST model call was sent.
 
-        Deliberately NOT `+ cache_creation_input_tokens`. Those are the cache
-        being rebuilt out of the same prompt, not extra tokens in the window
-        -- a turn that re-creates the cache reports the whole floor under
-        both `cache_creation` and (next turn) `cache_read`. Summing all three
-        counted a cache miss as the conversation doubling: live, a 60k
-        budget rotated at ~30k of actual talk, and the user asked why his
-        assistant compacted so often. The window is the same size either
-        way; only the billing column changed.
+        Two things were measured against `claude` stream-json on 2026-09-11,
+        after the brain rotated one question into a fresh conversation:
+
+        - The `result` event reports each usage column SUMMED over the
+          turn's model calls (201,137 = the exact sum of four calls of
+          37,765 to 55,278). A turn with tools is several calls, so sizing
+          the window from it counts the window once per call.
+        - One call's prompt is ALL THREE input columns. The warm-up read
+          12,046 from cache and wrote 24,696 to it; the next call read back
+          36,742. The same prompt reports under `cache_creation` on a miss
+          and `cache_read` on a hit -- one window either way.
+
+        So: the last `assistant` event's usage, all three columns. Earlier
+        this left `cache_creation` out, to stop a 60k budget rotating at
+        ~30k of talk; that was the summing, and leaving the column out only
+        hid part of it while under-counting the warm-up's floor. A CLI that
+        reports no per-call usage leaves the result, which is exact for a
+        turn of one call.
         """
-        u = self.usage
-        return u.get("input_tokens", 0) + u.get("cache_read_input_tokens", 0)
+        u = self.window_usage or self.usage
+        return (u.get("input_tokens", 0) + u.get("cache_read_input_tokens", 0)
+                + u.get("cache_creation_input_tokens", 0))
 
     def result(self, rate_limit: Optional[dict]) -> TurnResult:
         u = self.usage
@@ -632,10 +643,10 @@ class Brain:
         """How much of the window is the CONVERSATION, rather than the fixed
         cost of being connected to things.
 
-        `context_tokens` is the prompt as sent (see `_Turn.context_tokens`
-        for why cache creation is not in it), and the baseline is that same
-        figure off the warm-up turn -- the one turn with no conversation in
-        it. The difference is what has been said since.
+        `context_tokens` is the prompt the last model call was sent (see
+        `_Turn.context_tokens`), and the baseline is that same figure off the
+        warm-up turn -- the one turn with no conversation in it. The
+        difference is what has been said since.
         """
         return max(0, self.context_tokens - self.baseline_tokens)
 
@@ -1201,6 +1212,12 @@ class Brain:
                         except Exception as e:
                             log.warning(f"delta listener failed: {e}")
         elif kind == "assistant" and t is not None:
+            # One model call. Its usage, not the result's, is the window --
+            # see `_Turn.context_tokens`. A call split over several events
+            # repeats the same usage, so keeping the latest is right.
+            call_usage = (ev.get("message") or {}).get("usage")
+            if isinstance(call_usage, dict):
+                t.window_usage = call_usage
             for block in (ev.get("message") or {}).get("content") or []:
                 if not isinstance(block, dict):
                     continue

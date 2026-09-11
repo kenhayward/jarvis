@@ -437,7 +437,11 @@ async def test_the_resident_floor_is_measured_not_guessed(tmp_path):
     b = brain.Brain(_config(tmp_path))
     await b.start()
     try:
-        assert b.baseline_tokens == 10 + 9000      # the prompt as sent; cache_creation is it being cached, not more of it
+        # The whole prompt, cache writes included. Live, the warm-up WRITES
+        # most of the floor to the cache (24,696 of 36,744); counting only
+        # what it read recorded a floor a third its size, and every turn
+        # after it looked 24k fuller than it was.
+        assert b.baseline_tokens == 10 + 9000 + 1000
     finally:
         await b.stop()
 

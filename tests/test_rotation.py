@@ -328,27 +328,82 @@ def test_the_budget_defaults_and_reads_the_environment(tmp_path, monkeypatch):
     assert brain.BrainConfig.from_env(tmp_path).context_budget == 25000
 
 
-def test_a_cache_rebuild_is_not_counted_as_the_conversation_growing():
-    """Live: a 60k budget rotated at ~30k of actual talk, and the user asked
-    why his assistant compacted so often.
+def test_a_cache_miss_and_a_cache_hit_are_the_same_window():
+    """One model call's prompt is ALL THREE input columns. Measured against
+    `claude` stream-json, 2026-09-11: the warm-up call read 12,046 from cache
+    and wrote 24,696 to it, and the next call read back 36,742 -- exactly the
+    two together. The same prompt reports under `cache_creation` when the
+    cache misses and under `cache_read` when it hits; either way it is one
+    window of one size.
 
-    `context_tokens` summed input + cache_read + cache_creation. But
-    cache_creation is the prompt cache being REBUILT out of the same prompt --
-    a turn that misses the cache reports the whole floor under that column
-    and again next turn under cache_read. Summing all three counted every
-    cache miss as the conversation doubling. The window is the prompt as
-    sent: input plus cache_read, and nothing else."""
+    This replaces a test that said the opposite -- that creation is not the
+    window. The incident behind it (a 60k budget rotating at ~30k of talk) was
+    the result event SUMMING a turn's model calls; see the next test. Dropping
+    the creation column hid part of that over-count and under-counted every
+    single call that wrote the cache, the warm-up's floor included."""
     t = brain._Turn("user", None)
-    # A cache-miss turn: everything was re-created, nothing was read.
-    t.usage = {"input_tokens": 500, "cache_read_input_tokens": 0,
-               "cache_creation_input_tokens": 29_000, "output_tokens": 40}
-    assert t.context_tokens() == 500, (
-        "29k of cache creation is the floor being rebuilt, not 29k of new "
-        "conversation")
-    # The next turn reads that cache back: THIS is the real window size.
-    t.usage = {"input_tokens": 500, "cache_read_input_tokens": 29_000,
-               "cache_creation_input_tokens": 0, "output_tokens": 40}
-    assert t.context_tokens() == 29_500
+    t.window_usage = {"input_tokens": 500, "cache_read_input_tokens": 0,
+                      "cache_creation_input_tokens": 29_000, "output_tokens": 40}
+    assert t.context_tokens() == 29_500, "a miss: the whole prompt written to cache"
+    t.window_usage = {"input_tokens": 500, "cache_read_input_tokens": 29_000,
+                      "cache_creation_input_tokens": 0, "output_tokens": 40}
+    assert t.context_tokens() == 29_500, "a hit: the same prompt read back"
+
+
+def test_the_window_is_the_last_model_call_not_the_turns_total():
+    """Live, 2026-09-11: the brain rotated after ONE question. That turn made
+    four model calls of ~37k each, and the `result` event reports every usage
+    column summed over a turn's calls (measured: 201,137 = the exact sum of
+    calls of 37,765 to 55,278). Sized from that, a turn with tools counts the
+    window once per call. The window is what the LAST call was sent."""
+    t = brain._Turn("user", None)
+    t.window_usage = {"input_tokens": 2, "cache_read_input_tokens": 55_276,
+                      "cache_creation_input_tokens": 198, "output_tokens": 30}
+    t.usage = {"input_tokens": 8, "cache_read_input_tokens": 201_129,
+               "cache_creation_input_tokens": 17_711, "output_tokens": 120}
+    assert t.context_tokens() == 2 + 55_276 + 198
+
+
+def test_a_turn_reported_only_by_its_result_still_counts_all_three_columns():
+    """A CLI that sends no per-call usage leaves only the result -- exact for
+    a turn of one call, which is the only kind such a CLI can be measured on."""
+    t = brain._Turn("user", None)
+    t.usage = {"input_tokens": 10, "cache_read_input_tokens": 9_000,
+               "cache_creation_input_tokens": 1_000, "output_tokens": 5}
+    assert t.context_tokens() == 10_010
+
+
+@pytest.mark.asyncio
+async def test_a_turn_with_a_tool_counts_its_window_once(tmp_path):
+    """End to end through the fake, which now reports usage the way the real
+    CLI does. "TOOL" is two model calls: the tool_use (reads 18,000, writes
+    1,000) and the answer (reads 19,000, writes 200). The window is the second
+    call's prompt, 19,210 -- not the result's sum, 37,020 plus creation."""
+    b = brain.Brain(_config(tmp_path))
+    try:
+        await b.start()
+        r = await b.turn("TOOL please")
+        assert r.context_tokens == 10 + 19_000 + 200
+        assert b.context_tokens == r.context_tokens
+    finally:
+        await b.stop()
+
+
+@pytest.mark.asyncio
+async def test_one_question_with_a_tool_does_not_rotate_a_fresh_brain(tmp_path):
+    """The live incident, reproduced: a fresh brain, one question that used a
+    tool, and a budget the real conversation is well inside. Summed, the turn
+    looked like 28,010 tokens of conversation against a 12,000 budget and
+    rotated; it is 9,200."""
+    b = brain.Brain(_config(tmp_path, context_budget=12_000))
+    try:
+        await b.start()
+        await b.turn("TOOL what is running?")
+        assert b.rotation_pending is False, (
+            f"rotated after one question: conversation={b.conversation_tokens} "
+            f"baseline={b.baseline_tokens} context={b.context_tokens}")
+    finally:
+        await b.stop()
 
 
 @pytest.mark.asyncio
